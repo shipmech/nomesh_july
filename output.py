@@ -13,15 +13,15 @@ def save_vtk(graph_data: Data, mesh_data: Data, output_dir: str, epoch: int, cas
     os.makedirs(output_dir, exist_ok=True)
 
     # Pad pos to 3D with z=0 for graph data
-    pos_cpu = graph_data.pos.cpu().numpy()
+    pos_cpu = graph_data.pos.detach().cpu().numpy()
     pos_3d = np.hstack([pos_cpu, np.zeros((pos_cpu.shape[0], 1), dtype=pos_cpu.dtype)])
 
     # Save graph data (nodes with features)
     graph_filename = os.path.join(output_dir, f"graph_epoch{epoch}_case{case_id}_step{step}.vtk")
     points = pv.PolyData(pos_3d)
-    features = graph_data.x.cpu().numpy()
+    features = graph_data.x.detach().cpu().numpy()
     points['features'] = features  # 14D features
-    node_type = graph_data.node_type.cpu().numpy()
+    node_type = graph_data.node_type.detach().cpu().numpy()
     points['node_type'] = node_type
     points.save(graph_filename)
 
@@ -36,7 +36,7 @@ def save_vtk(graph_data: Data, mesh_data: Data, output_dir: str, epoch: int, cas
     xx, yy = np.meshgrid(x, y)
     grid_points = np.vstack([xx.ravel(), yy.ravel()]).T
 
-    interpolated_quantities = griddata(mesh_data.pos.cpu().numpy(), mesh_data.x.cpu().numpy(), grid_points, method='nearest')
+    interpolated_quantities = griddata(mesh_data.pos.detach().cpu().numpy(), mesh_data.x.detach().cpu().numpy(), grid_points, method='nearest')
 
     # Create a flat 3D grid
     grid = pv.RectilinearGrid(x, y, [0])

@@ -121,7 +121,7 @@ class MappingGNN(nn.Module):
                 interpolated_x.scatter_add_(0, full_target_edge_index[0].unsqueeze(-1).expand(-1, conv_out.size(1)),
                                           conv_out_full[full_target_edge_index[1]] * full_interp_weights)
 
-        print(f"MappingGNN: interpolated_x.size={interpolated_x.size()}, full_pos.size={full_pos.size()}, num_nodes={num_nodes}, target_points.size={target_points.size()}")
+        #print(f"MappingGNN: interpolated_x.size={interpolated_x.size()}, full_pos.size={full_pos.size()}, num_nodes={num_nodes}, target_points.size={target_points.size()}")
 
         # Compute derivative edges based on the final full_pos
         target_edge_index_deriv = knn_graph(full_pos, k=self.config.k_neighbors, flow="source_to_target")
