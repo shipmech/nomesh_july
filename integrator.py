@@ -2,19 +2,15 @@
 import torch
 from torch_geometric.data import Data
 from config import SimulationConfig
-from model import DynamicsGNN, ICImprintingNN
+from model import DynamicsGNN
 from mesh import update_edges
 
 class TimeIntegrator:
-    def __init__(self, dt: float, config: SimulationConfig, ic_imprinting: ICImprintingNN):
+    def __init__(self, dt: float, base_features_dim: int, config: SimulationConfig):
         self.dt = dt
         self.config = config
-        self.ic_imprinting = ic_imprinting
 
     def compute_derivatives(self, gnn: DynamicsGNN, data: Data, aux_nns: dict[str, torch.nn.Module], bc_values: list[torch.Tensor], t: float) -> torch.Tensor:
-        # Imprint current physical to latent
-        data.x[:, :self.config.number_of_base_latent_features] = self.ic_imprinting(data.x[:, -6:-3])
-
         # Apply boundary transformations
         bc_transform_velocity = aux_nns['bc_transform_velocity']
         bc_transform_pressure = aux_nns['bc_transform_pressure']
