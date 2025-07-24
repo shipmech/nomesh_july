@@ -9,7 +9,8 @@ class SimulationConfig:
     vtk_save_frequency: int = 10
     log_case_params_frequency: int = 10
     output_dir: str = "./output"
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    #device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = "cpu"
     domain_width_range: Tuple[float, float] = (0.5, 2.0)
     domain_height_range: Tuple[float, float] = (0.5, 2.0)
     num_nodes_range: Tuple[int, int] = (1000, 2000)
