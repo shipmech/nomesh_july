@@ -71,4 +71,49 @@ class Case:
         self.graph_data = self.generate_graph()
 
     def generate_graph(self) -> Data:
-        pos = self.mesh
+        pos = self.mesh.get_nodes()
+        edge_index = update_edges(pos, self.config.k_neighbors, self.config.radius)
+
+        node_type = torch.zeros(pos.shape[0], dtype=torch.long, device=self.device)
+        node_type[list(self.mesh.boundary_node_sets['outlet'])] = 1  # Pressure
+        node_type[list(self.mesh.boundary_node_sets['inlet'])] = 2  # Velocity
+        node_type[list(self.mesh.boundary_node_sets['top'].union(self.mesh.boundary_node_sets['bottom']))] = 2  # Walls as velocity=0
+
+        base_dim = self.config.number_of_base_latent_features
+        bc_dim = max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)
+        phys_dim = 6  # u,v,p,u_t,v_t,p_t
+        x = torch.zeros((pos.shape[0], base_dim + 2 * bc_dim + phys_dim), dtype=torch.float32, device=self.device)
+
+        initial_state = self.initial_condition.get_initial_state().repeat(pos.shape[0], 1)
+        x[:, -phys_dim:-3] = initial_state  # u,v,p initial
+        # u_t,v_t,p_t initial = 0
+
+        graph_data = Data(x=x, pos=pos, edge_index=edge_index, node_type=node_type)
+        graph_data.width = torch.tensor(self.width, device=self.device)
+        graph_data.height = torch.tensor(self.height, device=self.device)
+        graph_data.inlet_velocity = torch.tensor(self.inlet_vel, device=self.device)
+        graph_data.outlet_pressure = torch.tensor(self.outlet_press, device=self.device)
+        graph_data.num_nodes = torch.tensor(pos.shape[0], device=self.device)
+        return graph_data
+
+    def update(self, t: float):
+        for bc in self.boundary_conditions:
+            value = bc.get_value(t)
+            if isinstance(bc, VelocityBC):
+                indices = list(self.mesh.boundary_node_sets['inlet'])
+                self.graph_data.x[indices, -6:-4] = value  # Update u,v in physical quantities
+            elif isinstance(bc, PressureBC):
+                indices = list(self.mesh.boundary_node_sets['outlet'])
+                self.graph_data.x[indices, -3] = value  # Update p
+
+    def get_mesh(self) -> Mesh:
+        return self.mesh
+
+    def get_graph_data(self) -> Data:
+        return self.graph_data
+
+    def add_obstacle(self, geometry: Geometry, trajectory: TimeHistoryData):
+        self.mesh.exclude_obstacles([geometry])
+        # Update graph after exclusion (recompute edge_index)
+        self.graph_data = self.generate_graph()
+        # Trajectory for moving (handled in update for future)
