@@ -2,7 +2,6 @@
 import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
-from torch_geometric.data import Data
 from config import SimulationConfig
 from mesh import update_edges
 
@@ -48,7 +47,7 @@ class BCCorrectionNN(nn.Module):
 
 class DynamicsGNN(MessagePassing):
     def __init__(self, config: SimulationConfig):
-        super().__init__(aggr='add', node_dim=None)  # Set node_dim=None to disable automatic lifting
+        super().__init__(aggr='add')
         self.config = config
 
         node_types = ['free', 'pressure', 'velocity']
@@ -77,7 +76,9 @@ class DynamicsGNN(MessagePassing):
 
     def forward(self, graph_data: Data) -> Data:
         graph_data.edge_index = update_edges(graph_data.pos, self.config.k_neighbors, self.config.radius)
-        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type=graph_data.node_type)
+        node_type_i = graph_data.node_type[graph_data.edge_index[1]]
+        node_type_j = graph_data.node_type[graph_data.edge_index[0]]
+        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type_i=node_type_i, node_type_j=node_type_j)
         graph_data.x[:, :self.config.number_of_base_latent_features] = out
         return graph_data
 
