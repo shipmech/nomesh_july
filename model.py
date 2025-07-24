@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric.nn import MessagePassing
 from torch_geometric.data import Data
 from config import SimulationConfig
@@ -10,7 +10,7 @@ class ICImprintingNN(nn.Module):
         super().__init__()
         self.config = config
         self.mlp = nn.Sequential(
-            nn.Linear(6, config.hidden_dim),
+            nn.Linear(3, config.hidden_dim),  # Changed to 3 for u,v,p
             nn.ReLU(),
             nn.Linear(config.hidden_dim, config.number_of_base_latent_features)
         )
@@ -36,116 +36,82 @@ class BCCorrectionNN(nn.Module):
         super().__init__()
         self.config = config
         self.mlp = nn.Sequential(
-            nn.Linear(config.number_of_base_latent_features * 2 + bc_features_dim, config.hidden_dim),
+            nn.Linear(config.number_of_base_latent_features + config.number_of_base_latent_features + bc_features_dim, config.hidden_dim),
             nn.ReLU(),
             nn.Linear(config.hidden_dim, config.number_of_base_latent_features)
         )
 
     def forward(self, base_features: torch.Tensor, aggregated_messages: torch.Tensor, bc_features: torch.Tensor) -> torch.Tensor:
-        inputs = torch.cat([base_features, aggregated_messages, bc_features], dim=-1)
-        return self.mlp(inputs)
+        combined = torch.cat([base_features, aggregated_messages, bc_features], dim=-1)
+        return self.mlp(combined)
 
 class DynamicsGNN(MessagePassing):
     def __init__(self, config: SimulationConfig):
-        super().__init__(aggr="add", node_dim=0)
+        super().__init__(aggr='add')
         self.config = config
-        self.node_types = ["free", "pressure", "velocity"]
-        feature_dims = {
-            "free": config.number_of_base_latent_features,
-            "pressure": config.number_of_base_latent_features + config.number_of_pressure_bc_latent_features,
-            "velocity": config.number_of_base_latent_features + config.number_of_velocities_bc_latent_features
-        }
+
+        node_types = ['free', 'pressure', 'velocity']
 
         self.message_nns = nn.ModuleDict({
-            src: nn.ModuleDict({
-                tgt: nn.Sequential(
-                    nn.Linear(feature_dims[src] + feature_dims[tgt] + 1, config.hidden_dim),
-                    nn.ReLU(),
-                    nn.Linear(config.hidden_dim, config.number_of_base_latent_features)
-                ) for tgt in self.node_types
-            }) for src in self.node_types
+            f'{src}_{dst}': nn.Sequential(
+                nn.Linear(2 * config.number_of_base_latent_features + 1, config.hidden_dim),  # x_j || x_i || dist
+                nn.ReLU(),
+                nn.Linear(config.hidden_dim, config.number_of_base_latent_features)
+            ) for src in node_types for dst in node_types
         })
 
         self.to_physic_transformation_nns = nn.ModuleDict({
-            nt: nn.Sequential(
-                nn.Linear(config.number_of_base_latent_features * 2 + (config.number_of_pressure_bc_latent_features if nt == "pressure" else config.number_of_velocities_bc_latent_features if nt == "velocity" else 0), config.hidden_dim),
+            typ: nn.Sequential(
+                nn.Linear(config.number_of_base_latent_features, config.hidden_dim),
                 nn.ReLU(),
-                nn.Linear(config.hidden_dim, 6)
-            ) for nt in self.node_types
+                nn.Linear(config.hidden_dim, 6)  # u,v,p,u_t,v_t,p_t
+            ) for typ in node_types
         })
+
+        self.bc_transform_pressure = BCTransformingNN(1, config.number_of_pressure_bc_latent_features, config)  # pressure BC
+        self.bc_transform_velocity = BCTransformingNN(2, config.number_of_velocities_bc_latent_features, config)  # velocity BC (u,v)
 
         self.bc_correction_pressure = BCCorrectionNN(config, config.number_of_pressure_bc_latent_features)
         self.bc_correction_velocity = BCCorrectionNN(config, config.number_of_velocities_bc_latent_features)
-        self.bc_transform_pressure = BCTransformingNN(1, config.number_of_pressure_bc_latent_features, config)
-        self.bc_transform_velocity = BCTransformingNN(2, config.number_of_velocities_bc_latent_features, config)
 
     def forward(self, graph_data: Data) -> Data:
-        graph_data = update_edges(graph_data, self.config)
-        node_type = graph_data.node_type.view(-1, 1)
-        x = self.propagate(graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type=node_type, boundary_data=graph_data.boundary_data)
-        graph_data.x = x
+        graph_data.edge_index = update_edges(graph_data.pos, self.config.k_neighbors, self.config.radius)
+        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type=graph_data.node_type)
+        graph_data.x[:, :self.config.number_of_base_latent_features] = out
         return graph_data
 
-    def message(self, x_i: torch.Tensor, x_j: torch.Tensor, pos_i: torch.Tensor, pos_j: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor) -> torch.Tensor:
-        messages = torch.zeros_like(x_i[:, :self.config.number_of_base_latent_features], dtype=x_i.dtype)
-        feature_dims = {
-            "free": self.config.number_of_base_latent_features,
-            "pressure": self.config.number_of_base_latent_features + self.config.number_of_pressure_bc_latent_features,
-            "velocity": self.config.number_of_base_latent_features + self.config.number_of_velocities_bc_latent_features
-        }
-        for i, src_type in enumerate(self.node_types):
-            for j, tgt_type in enumerate(self.node_types):
-                mask = (node_type_i.squeeze(-1) == i) & (node_type_j.squeeze(-1) == j)
-                if mask.any():
-                    src_features = x_i[mask, :feature_dims[src_type]]
-                    tgt_features = x_j[mask, :feature_dims[tgt_type]]
-                    dist = torch.norm(pos_j[mask] - pos_i[mask], dim=-1, keepdim=True)
-                    inputs = torch.cat([src_features, tgt_features, dist], dim=-1)
-                    messages[mask] = self.message_nns[src_type][tgt_type](inputs)
-        return messages
+    def message(self, x_j: torch.Tensor, x_i: torch.Tensor, pos_j: torch.Tensor, pos_i: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor) -> torch.Tensor:
+        dist = torch.norm(pos_i - pos_j, dim=-1, keepdim=True)
+        combined = torch.cat([x_j, x_i, dist], dim=-1)
+        src_type = node_type_j.long().item()  # Assuming batch size 1
+        dst_type = node_type_i.long().item()
+        key = f'{["free", "pressure", "velocity"][src_type]}_{["free", "pressure", "velocity"][dst_type]}'
+        return self.message_nns[key](combined)
 
-    def update(self, aggr_out: torch.Tensor, x: torch.Tensor, node_type: torch.Tensor, boundary_data: torch.Tensor) -> torch.Tensor:
+    def update(self, aggr_out: torch.Tensor, x: torch.Tensor, node_type: torch.Tensor) -> torch.Tensor:
         base_features = x[:, :self.config.number_of_base_latent_features]
-        new_features = torch.zeros_like(x)
-        new_features[:, :self.config.number_of_base_latent_features] = base_features
+        bc_features = x[:, self.config.number_of_base_latent_features : self.config.number_of_base_latent_features + max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)]
+        phys_features = x[:, -6:]
 
-        pressure_mask = node_type.squeeze(-1) == 1
-        velocity_mask = node_type.squeeze(-1) == 2
-        new_features[pressure_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_pressure_bc_latent_features] = self.bc_transform_pressure(boundary_data[pressure_mask, :1])
-        new_features[velocity_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_velocities_bc_latent_features] = self.bc_transform_velocity(boundary_data[velocity_mask, :2])
+        mask_free = node_type == 0
+        mask_pressure = node_type == 1
+        mask_velocity = node_type == 2
 
-        derivatives = torch.zeros_like(base_features)
-        derivatives[node_type.squeeze(-1) == 0] = aggr_out[node_type.squeeze(-1) == 0]
-        derivatives[pressure_mask] = self.bc_correction_pressure(base_features[pressure_mask], aggr_out[pressure_mask], new_features[pressure_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_pressure_bc_latent_features])
-        derivatives[velocity_mask] = self.bc_correction_velocity(base_features[velocity_mask], aggr_out[velocity_mask], new_features[velocity_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_velocities_bc_latent_features])
+        updated_features = aggr_out.clone()
+        updated_features[mask_pressure] = self.bc_correction_pressure(base_features[mask_pressure], aggr_out[mask_pressure], bc_features[mask_pressure])
+        updated_features[mask_velocity] = self.bc_correction_velocity(base_features[mask_velocity], aggr_out[mask_velocity], bc_features[mask_velocity])
 
-        phys_quantities = torch.zeros(x.shape[0], 6, device=x.device)
-        for i, nt in enumerate(self.node_types):
-            mask = node_type.squeeze(-1) == i
-            if mask.any():
-                bc_features = new_features[mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + (self.config.number_of_pressure_bc_latent_features if nt == "pressure" else self.config.number_of_velocities_bc_latent_features if nt == "velocity" else 0)]
-                inputs = torch.cat([base_features[mask], derivatives[mask], bc_features], dim=-1)
-                phys_quantities[mask] = self.to_physic_transformation_nns[nt](inputs)
+        # Compute physical quantities
+        phys_out = torch.zeros_like(phys_features)
+        for typ, mask in zip(['free', 'pressure', 'velocity'], [mask_free, mask_pressure, mask_velocity]):
+            if mask.sum() > 0:
+                phys_out[mask] = self.to_physic_transformation_nns[typ](updated_features[mask])
 
-        new_features[:, -6:] = phys_quantities
-        return new_features
+        x[:, :self.config.number_of_base_latent_features] = updated_features
+        x[:, -6:] = phys_out
+
+        return updated_features  # For MessagePassing
 
     def compute_derivatives(self, graph_data: Data) -> torch.Tensor:
-        edge_index = graph_data.edge_index
-        x = graph_data.x
-        pos = graph_data.pos
-        node_type = graph_data.node_type.view(-1, 1)
-        boundary_data = graph_data.boundary_data
-        new_features = torch.zeros_like(x)
-        pressure_mask = node_type.squeeze(-1) == 1
-        velocity_mask = node_type.squeeze(-1) == 2
-        new_features[pressure_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_pressure_bc_latent_features] = self.bc_transform_pressure(boundary_data[pressure_mask, :1])
-        new_features[velocity_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_velocities_bc_latent_features] = self.bc_transform_velocity(boundary_data[velocity_mask, :2])
-        messages = self.message(x[edge_index[0]], x[edge_index[1]], pos[edge_index[0]], pos[edge_index[1]], node_type[edge_index[0]], node_type[edge_index[1]])
-        aggr_out = self.aggregate(messages, edge_index[1], dim_size=graph_data.num_nodes)
-        base_features = x[:, :self.config.number_of_base_latent_features]
-        derivatives = torch.zeros_like(base_features)
-        derivatives[node_type.squeeze(-1) == 0] = aggr_out[node_type.squeeze(-1) == 0]
-        derivatives[pressure_mask] = self.bc_correction_pressure(base_features[pressure_mask], aggr_out[pressure_mask], new_features[pressure_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_pressure_bc_latent_features])
-        derivatives[velocity_mask] = self.bc_correction_velocity(base_features[velocity_mask], aggr_out[velocity_mask], new_features[velocity_mask, self.config.number_of_base_latent_features:self.config.number_of_base_latent_features + self.config.number_of_velocities_bc_latent_features])
-        return derivatives
+        # Assuming derivatives are part of phys_out, e.g., u_t, v_t, p_t
+        return graph_data.x[:, -3:]  # u_t, v_t, p_t
