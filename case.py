@@ -1,10 +1,11 @@
-# case.py (updated to use update_edges from mesh)
+# case.py (updated with numpy import and empty faces as 2D array)
 import torch
 from torch_geometric.data import Data
 import pymesh
 import random
+import numpy as np  # Added import
 from geometry import Box, Sphere, Geometry
-from mesh import Mesh, update_edges  # Add update_edges import
+from mesh import Mesh, update_edges
 from conditions import BoundaryCondition, InitialCondition, PressureBC, VelocityBC
 from utils import TimeHistoryData
 
@@ -38,7 +39,8 @@ class Case:
         y = torch.linspace(0, self.geometry.height, self.config.ny)
         xx, yy = torch.meshgrid(x, y, indexing='ij')
         vertices = torch.stack([xx.flatten(), yy.flatten()], dim=1).numpy()
-        faces = []  # Point cloud; connectivity via knn_graph
+        faces = np.array([], dtype=np.int32).reshape(0, 3)  # Empty 2D array for faces
+
         pymesh_mesh = pymesh.form_mesh(vertices=vertices, faces=faces)
 
         # Boundary node sets
