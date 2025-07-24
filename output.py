@@ -38,9 +38,10 @@ def save_vtk(graph_data: Data, mesh_data: Data, output_dir: str, epoch: int, cas
 
     interpolated_quantities = griddata(mesh_data.pos.cpu().numpy(), mesh_data.x.cpu().numpy(), grid_points, method='nearest')
 
-    # Make 3D flat grid
+    # Create a flat 3D grid
     grid = pv.RectilinearGrid(x, y, [0])
-    grid.point_data['quantities'] = interpolated_quantities.reshape((nx, ny, 1), order='F')[:, :, 0]  # Flatten to 2D data on 3D grid
+    grid.point_data['quantities'] = interpolated_quantities  # Directly set the (2500, 6) array
+
     grid.save(mesh_filename)
 
 def log_case_params(cases: List[Case], output_dir: str, epoch: int):
