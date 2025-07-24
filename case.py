@@ -1,10 +1,10 @@
+# case.py (updated to use update_edges from mesh)
 import torch
 from torch_geometric.data import Data
-from torch_geometric.nn import knn_graph
 import pymesh
 import random
 from geometry import Box, Sphere, Geometry
-from mesh import Mesh
+from mesh import Mesh, update_edges  # Add update_edges import
 from conditions import BoundaryCondition, InitialCondition, PressureBC, VelocityBC
 from utils import TimeHistoryData
 
@@ -64,11 +64,7 @@ class Case:
 
     def generate_graph(self) -> Data:
         pos = self.mesh.get_nodes()
-        edge_index = knn_graph(pos, k=self.config.k_neighbors)
-        # Filter by radius
-        dist = torch.norm(pos[edge_index[0]] - pos[edge_index[1]], dim=-1)
-        mask = dist < self.config.radius
-        edge_index = edge_index[:, mask]
+        edge_index = update_edges(pos, self.config.k_neighbors, self.config.radius)
 
         # Node types (0: free, 1: pressure, 2: velocity)
         node_type = torch.zeros(pos.shape[0], dtype=torch.long)

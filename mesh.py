@@ -1,7 +1,7 @@
 import torch
 import pymesh
 from torch_geometric.nn import knn_graph
-from geometry import Geometry
+from geometry import Geometry, Sphere
 
 class Mesh:
     def __init__(self, pymesh_mesh: pymesh.Mesh, boundary_node_sets: dict[str, set[int]]):
