@@ -6,7 +6,7 @@ from model import DynamicsGNN
 from mesh import update_edges
 
 class TimeIntegrator:
-    def __init__(self, dt: float, base_features_dim: int, config: SimulationConfig):
+    def __init__(self, dt: float, config: SimulationConfig):
         self.dt = dt
         self.config = config
 
