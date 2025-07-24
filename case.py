@@ -24,9 +24,9 @@ class Case:
         self._initialize()
 
     def _initialize(self):
-        width = random.uniform(*self.config.domain_width_range)
-        height = random.uniform(*self.config.domain_height_range)
-        self.geometry = Box(width, height)
+        self.width = random.uniform(*self.config.domain_width_range)
+        self.height = random.uniform(*self.config.domain_height_range)
+        self.geometry = Box(self.width, self.height)
 
         num_steps = int(self.config.simulation_time / self.config.dt) + 1
         times = torch.linspace(0, self.config.simulation_time, num_steps, device=self.device)
@@ -38,7 +38,7 @@ class Case:
             num_nodes = self.config.validation_num_nodes
         else:
             num_nodes = random.randint(*self.config.num_nodes_range)
-        aspect = width / height
+        aspect = self.width / self.height
         ny = int(math.sqrt(num_nodes / aspect))
         nx = int(num_nodes / ny)
 
@@ -58,10 +58,10 @@ class Case:
         }
         self.mesh = Mesh(pymesh_mesh, boundary_node_sets, self.device)
 
-        inlet_vel = random.uniform(*self.config.inlet_velocity_range)
-        outlet_press = random.uniform(*self.config.outlet_pressure_range)
-        vel_values = torch.full_like(values, inlet_vel)
-        press_values = torch.full_like(values, outlet_press)
+        self.inlet_vel = random.uniform(*self.config.inlet_velocity_range)
+        self.outlet_press = random.uniform(*self.config.outlet_pressure_range)
+        vel_values = torch.full_like(values, self.inlet_vel)
+        press_values = torch.full_like(values, self.outlet_press)
         self.boundary_conditions.append(VelocityBC(TimeHistoryData(times, vel_values[:, :2])))
         self.boundary_conditions.append(PressureBC(TimeHistoryData(times, press_values[:, 2:3])))
 
@@ -85,7 +85,13 @@ class Case:
         x[:, -phys_dim:-3] = initial_state  # u,v,p initial
         # u_t,v_t,p_t initial = 0
 
-        return Data(x=x, pos=pos, edge_index=edge_index, node_type=node_type)
+        graph_data = Data(x=x, pos=pos, edge_index=edge_index, node_type=node_type)
+        graph_data.width = torch.tensor(self.width, device=self.device)
+        graph_data.height = torch.tensor(self.height, device=self.device)
+        graph_data.inlet_velocity = torch.tensor(self.inlet_vel, device=self.device)
+        graph_data.outlet_pressure = torch.tensor(self.outlet_press, device=self.device)
+        graph_data.num_nodes = torch.tensor(pos.shape[0], device=self.device)
+        return graph_data
 
     def update(self, t: float):
         for bc in self.boundary_conditions:
