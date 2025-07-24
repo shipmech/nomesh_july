@@ -1,3 +1,4 @@
+# simulation.py
 import torch
 from lightning.pytorch import LightningModule
 from torch.optim import Adam
@@ -76,7 +77,7 @@ class FluidSimulation(LightningModule):
                 'bc_correction_pressure': self.dynamics_gnn.bc_correction_pressure,
                 'bc_correction_velocity': self.dynamics_gnn.bc_correction_velocity
             }
-            bc_values_list = [bc.get_value(t) for bc in case.boundary_conditions]
+            bc_values_list = [[bc.get_value(t) for bc in case.boundary_conditions]]
             graph_data = self.integrator.step(self.dynamics_gnn, graph_data, aux_nns, bc_values_list, t)
 
             prev_quantities = quantities
@@ -129,7 +130,7 @@ class FluidSimulation(LightningModule):
                 'bc_correction_pressure': self.dynamics_gnn.bc_correction_pressure,
                 'bc_correction_velocity': self.dynamics_gnn.bc_correction_velocity
             }
-            bc_values_list = [bc.get_value(t) for bc in case.boundary_conditions]
+            bc_values_list = [[bc.get_value(t) for bc in case.boundary_conditions]]
             graph_data = self.integrator.step(self.dynamics_gnn, graph_data, aux_nns, bc_values_list, t)
 
             prev_quantities = quantities
