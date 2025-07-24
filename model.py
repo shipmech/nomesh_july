@@ -2,6 +2,7 @@
 import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
+from torch_geometric.data import Data
 from config import SimulationConfig
 from mesh import update_edges
 
