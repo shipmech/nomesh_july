@@ -48,14 +48,14 @@ class BCCorrectionNN(nn.Module):
 
 class DynamicsGNN(MessagePassing):
     def __init__(self, config: SimulationConfig):
-        super().__init__(aggr='add')
+        super().__init__(aggr='add', node_dim=None)  # Set node_dim=None to disable automatic lifting
         self.config = config
 
         node_types = ['free', 'pressure', 'velocity']
 
         self.message_nns = nn.ModuleDict({
             f'{src}_{dst}': nn.Sequential(
-                nn.Linear(2 * config.number_of_base_latent_features + 1, config.hidden_dim),  # x_j || x_i || dist
+                nn.Linear(2 * config.number_of_base_latent_features + 1, config.hidden_dim),  # x_j_base || x_i_base || dist
                 nn.ReLU(),
                 nn.Linear(config.hidden_dim, config.number_of_base_latent_features)
             ) for src in node_types for dst in node_types
@@ -83,9 +83,11 @@ class DynamicsGNN(MessagePassing):
 
     def message(self, x_j: torch.Tensor, x_i: torch.Tensor, pos_j: torch.Tensor, pos_i: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor) -> torch.Tensor:
         dist = torch.norm(pos_i - pos_j, dim=-1, keepdim=True)
-        combined = torch.cat([x_j, x_i, dist], dim=-1)
-        src_type = node_type_j.squeeze(-1).long()
-        dst_type = node_type_i.squeeze(-1).long()
+        x_j_base = x_j[:, :self.config.number_of_base_latent_features]
+        x_i_base = x_i[:, :self.config.number_of_base_latent_features]
+        combined = torch.cat([x_j_base, x_i_base, dist], dim=-1)
+        src_type = node_type_j.long()
+        dst_type = node_type_i.long()
         messages = torch.zeros(combined.shape[0], self.config.number_of_base_latent_features, device=combined.device)
         for s in range(3):
             for d in range(3):
@@ -100,9 +102,9 @@ class DynamicsGNN(MessagePassing):
         bc_features = x[:, self.config.number_of_base_latent_features : self.config.number_of_base_latent_features + max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)]
         phys_features = x[:, -6:]
 
-        mask_free = (node_type.squeeze(-1) == 0)
-        mask_pressure = (node_type.squeeze(-1) == 1)
-        mask_velocity = (node_type.squeeze(-1) == 2)
+        mask_free = (node_type == 0)
+        mask_pressure = (node_type == 1)
+        mask_velocity = (node_type == 2)
 
         updated_features = aggr_out.clone()
         if mask_pressure.sum() > 0:
