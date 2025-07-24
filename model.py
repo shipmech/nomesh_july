@@ -48,7 +48,7 @@ class BCCorrectionNN(nn.Module):
 
 class DynamicsGNN(MessagePassing):
     def __init__(self, config: SimulationConfig):
-        super().__init__(aggr='add', node_dim=None)  # Disable automatic lifting
+        super().__init__(aggr='add', node_dim=-2)
         self.config = config
 
         node_types = ['free', 'pressure', 'velocity']
@@ -77,7 +77,9 @@ class DynamicsGNN(MessagePassing):
 
     def forward(self, graph_data: Data) -> Data:
         graph_data.edge_index = update_edges(graph_data.pos, self.config.k_neighbors, self.config.radius)
-        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type=graph_data.node_type)
+        node_type_i = graph_data.node_type[graph_data.edge_index[1]]
+        node_type_j = graph_data.node_type[graph_data.edge_index[0]]
+        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type_i=node_type_i, node_type_j=node_type_j, node_type=graph_data.node_type)
         graph_data.x[:, :self.config.number_of_base_latent_features] = out
         return graph_data
 
@@ -86,8 +88,8 @@ class DynamicsGNN(MessagePassing):
         x_j_base = x_j[:, :self.config.number_of_base_latent_features]
         x_i_base = x_i[:, :self.config.number_of_base_latent_features]
         combined = torch.cat([x_j_base, x_i_base, dist], dim=-1)
-        src_type = node_type_j.long()
-        dst_type = node_type_i.long()
+        src_type = node_type_j.squeeze(-1).long()
+        dst_type = node_type_i.squeeze(-1).long()
         messages = torch.zeros(combined.shape[0], self.config.number_of_base_latent_features, device=combined.device)
         for s in range(3):
             for d in range(3):
@@ -102,9 +104,9 @@ class DynamicsGNN(MessagePassing):
         bc_features = x[:, self.config.number_of_base_latent_features : self.config.number_of_base_latent_features + max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)]
         phys_features = x[:, -6:]
 
-        mask_free = (node_type == 0)
-        mask_pressure = (node_type == 1)
-        mask_velocity = (node_type == 2)
+        mask_free = (node_type.squeeze(-1) == 0)
+        mask_pressure = (node_type.squeeze(-1) == 1)
+        mask_velocity = (node_type.squeeze(-1) == 2)
 
         updated_features = aggr_out.clone()
         if mask_pressure.sum() > 0:
