@@ -79,17 +79,17 @@ class DynamicsGNN(MessagePassing):
         graph_data.edge_index = update_edges(graph_data.pos, self.config.k_neighbors, self.config.radius)
         node_type_i = graph_data.node_type[graph_data.edge_index[1]]
         node_type_j = graph_data.node_type[graph_data.edge_index[0]]
-        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, node_type_i=node_type_i, node_type_j=node_type_j)
+        out = self.propagate(edge_index=graph_data.edge_index, x=graph_data.x, pos=graph_data.pos, type_i=node_type_i, type_j=node_type_j, node_type=graph_data.node_type)
         graph_data.x[:, :self.config.number_of_base_latent_features] = out
         return graph_data
 
-    def message(self, x_j: torch.Tensor, x_i: torch.Tensor, pos_j: torch.Tensor, pos_i: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor) -> torch.Tensor:
+    def message(self, x_j: torch.Tensor, x_i: torch.Tensor, pos_j: torch.Tensor, pos_i: torch.Tensor, type_i: torch.Tensor, type_j: torch.Tensor) -> torch.Tensor:
         dist = torch.norm(pos_i - pos_j, dim=-1, keepdim=True)
         x_j_base = x_j[:, :self.config.number_of_base_latent_features]
         x_i_base = x_i[:, :self.config.number_of_base_latent_features]
         combined = torch.cat([x_j_base, x_i_base, dist], dim=-1)
-        src_type = node_type_j.long()
-        dst_type = node_type_i.long()
+        src_type = type_j.long()
+        dst_type = type_i.long()
         messages = torch.zeros(combined.shape[0], self.config.number_of_base_latent_features, device=combined.device)
         for s in range(3):
             for d in range(3):
