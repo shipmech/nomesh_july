@@ -1,0 +1,9 @@
+# Ignore directories
+.devcontainer/
+__pycache__/
+torch_pymesh_docker/
+output/
+logs/
+
+# Ignore specific file
+11.bat
