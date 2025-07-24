@@ -34,7 +34,12 @@ class Mesh:
         pass
 
 def update_edges(pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
-    edge_index = knn_graph(pos, k=k)
-    dist = torch.norm(pos[edge_index[0]] - pos[edge_index[1]], dim=1)
+    pos_cpu = pos.cpu()
+    edge_index = knn_graph(pos_cpu, k=k)
+    dist = torch.norm(pos_cpu[edge_index[0]] - pos_cpu[edge_index[1]], dim=1)
     mask = dist < radius
-    return edge_index[:, mask]
+    edge_index = edge_index[:, mask].to(pos.device)
+    # Assert to check for invalid indices
+    if edge_index.numel() > 0:
+        assert edge_index.max() < pos.size(0), f"Invalid edge_index: max {edge_index.max()} >= num_nodes {pos.size(0)}"
+    return edge_index
