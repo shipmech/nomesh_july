@@ -37,8 +37,8 @@ class FluidSimulation(LightningModule):
         target_points = case.get_mesh().get_nodes()
         pos = graph_data.pos
         edge_index = graph_data.edge_index
-        # Pseudo for SplineConv (normalized edge attributes, e.g., relative positions)
-        pseudo = (pos[edge_index[1]] - pos[edge_index[0]]) / self.config.radius  # Example normalization
+        radius_tensor = torch.tensor(self.config.radius, device=self.device)
+        pseudo = (pos[edge_index[1]] - pos[edge_index[0]]) / radius_tensor
 
         # Compute initial quantities after imprinting
         initial_quantities = self.mapping_gnn(graph_data, target_points, ensure_all_nodes=False).x[:, :3]  # Mapped u,v,p
@@ -90,14 +90,13 @@ class FluidSimulation(LightningModule):
         return total_loss
 
     def validation_step(self, batch: Case, batch_idx: int) -> torch.Tensor:
-        # Similar to training_step but without optimizer, and log val_loss
-        # Implement analogously, returning val_loss
         case = batch
         graph_data = self.initialize_graph(case)
         target_points = case.get_mesh().get_nodes()
         pos = graph_data.pos
         edge_index = graph_data.edge_index
-        pseudo = (pos[edge_index[1]] - pos[edge_index[0]]) / self.config.radius
+        radius_tensor = torch.tensor(self.config.radius, device=self.device)
+        pseudo = (pos[edge_index[1]] - pos[edge_index[0]]) / radius_tensor
 
         initial_quantities = self.mapping_gnn(graph_data, target_points, ensure_all_nodes=False).x[:, :3]
         ground_truth_ic = case.initial_condition.get_initial_state().repeat(initial_quantities.shape[0], 1)

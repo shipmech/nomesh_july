@@ -1,31 +1,33 @@
+# mesh.py
 import torch
 import pymesh
 from torch_geometric.nn import knn_graph
-from geometry import Geometry, Sphere
+from geometry import Geometry
 
 class Mesh:
-    def __init__(self, pymesh_mesh: pymesh.Mesh, boundary_node_sets: dict[str, set[int]]):
+    def __init__(self, pymesh_mesh: pymesh.Mesh, boundary_node_sets: dict[str, set[int]], device):
         self.pymesh_mesh = pymesh_mesh
         self.boundary_node_sets = boundary_node_sets
+        self.device = device
+        self.nodes = torch.tensor(pymesh_mesh.vertices, dtype=torch.float32, device=device)
 
     def get_nodes(self) -> torch.Tensor:
-        return torch.tensor(self.pymesh_mesh.vertices, dtype=torch.float32)
+        return self.nodes
 
     def get_connectivity(self) -> torch.Tensor:
-        return torch.tensor(self.pymesh_mesh.faces, dtype=torch.int64)
+        return torch.tensor(self.pymesh_mesh.faces, dtype=torch.int64, device=self.device)
 
     def exclude_obstacles(self, obstacles: list[Geometry]):
-        # Placeholder for mesh subtraction using PyMesh (e.g., boolean operations)
-        # For now, filter nodes outside obstacles
-        nodes = self.get_nodes()
-        keep_mask = torch.ones(nodes.shape[0], dtype=torch.bool)
+        nodes = self.nodes
+        keep_mask = torch.ones(nodes.shape[0], dtype=torch.bool, device=self.device)
         for obs in obstacles:
             if isinstance(obs, Sphere):
-                dist = torch.norm(nodes - torch.tensor(obs.center, dtype=torch.float32), dim=1)
+                dist = torch.norm(nodes - torch.tensor(obs.center, dtype=torch.float32, device=self.device), dim=1)
                 keep_mask &= (dist > obs.radius)
         # Update PyMesh mesh (simplified; real impl would remesh)
-        new_vertices = nodes[keep_mask].numpy()
+        new_vertices = nodes[keep_mask].cpu().numpy()
         self.pymesh_mesh = pymesh.form_mesh(new_vertices, self.pymesh_mesh.faces)  # Faces may need recalculation
+        self.nodes = nodes[keep_mask]
 
     def restructure(self):
         # Placeholder for mesh restructuring (e.g., refinement)

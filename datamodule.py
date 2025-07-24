@@ -1,8 +1,9 @@
-# datamodule.py (updated with collate_fn)
+# datamodule.py
 import torch
 from torch.utils.data import Dataset, DataLoader
 from lightning.pytorch import LightningDataModule
-from case import Case  # New import
+from case import Case
+import copy
 
 class FluidDynamicsDataset(Dataset):
     def __init__(self, config, is_training: bool = True):
@@ -12,13 +13,12 @@ class FluidDynamicsDataset(Dataset):
 
     def _generate_cases(self) -> list[Case]:
         if not self.is_training:
-            # Fixed validation case
-            fixed_config = self.config  # Copy and override
+            fixed_config = copy.copy(self.config)
             fixed_config.domain_width_range = (1.0, 1.0)
             fixed_config.domain_height_range = (0.5, 0.5)
             fixed_config.inlet_velocity_range = (0.5, 0.5)
             fixed_config.outlet_pressure_range = (100.0, 100.0)
-            fixed_config.num_nodes_range = (1500, 1500)  # Fixed 1500 nodes
+            fixed_config.validation_num_nodes = 1500  # Used in _initialize
             return [Case(fixed_config)]
         
         # Training: random cases

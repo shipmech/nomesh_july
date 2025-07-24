@@ -1,3 +1,4 @@
+# utils.py
 import torch
 
 class TimeHistoryData:
@@ -23,7 +24,8 @@ class TimeHistoryData:
         return derivatives
 
     def get_value(self, t: float) -> torch.Tensor:
-        idx = torch.searchsorted(self.times, t)
+        t_tensor = torch.tensor(t, dtype=self.times.dtype, device=self.times.device)
+        idx = torch.searchsorted(self.times, t_tensor)
         if idx == 0:
             return self.values[0]
         if idx == len(self.times):
@@ -31,10 +33,11 @@ class TimeHistoryData:
         # Linear interpolation
         t1, t2 = self.times[idx - 1], self.times[idx]
         v1, v2 = self.values[idx - 1], self.values[idx]
-        return v1 + (v2 - v1) * (t - t1) / (t2 - t1)
+        return v1 + (v2 - v1) * (t_tensor - t1) / (t2 - t1)
 
     def get_derivative(self, t: float) -> torch.Tensor:
-        idx = torch.searchsorted(self.times, t)
+        t_tensor = torch.tensor(t, dtype=self.times.dtype, device=self.times.device)
+        idx = torch.searchsorted(self.times, t_tensor)
         if idx == 0:
             return self.derivatives[0]
         if idx == len(self.times):
@@ -42,4 +45,4 @@ class TimeHistoryData:
         # Linear interpolation
         t1, t2 = self.times[idx - 1], self.times[idx]
         d1, d2 = self.derivatives[idx - 1], self.derivatives[idx]
-        return d1 + (d2 - d1) * (t - t1) / (t2 - t1)
+        return d1 + (d2 - d1) * (t_tensor - t1) / (t2 - t1)
