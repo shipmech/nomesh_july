@@ -18,7 +18,7 @@ class FluidSimulation(LightningModule):
         self.dynamics_gnn = DynamicsGNN(config)
         self.mapping_gnn = MappingGNN(config)
         self.ic_imprinting = ICImprintingNN(config)
-        self.integrator = TimeIntegrator(config.dt, config, self.ic_imprinting)
+        self.integrator = TimeIntegrator(config.dt, config)
         self.physics_loss = PhysicsLoss(config)
         self.save_hyperparameters()
 
@@ -80,6 +80,10 @@ class FluidSimulation(LightningModule):
             bc_values_list = [[bc.get_value(t) for bc in case.boundary_conditions]]
             graph_data = self.integrator.step(self.dynamics_gnn, graph_data, aux_nns, bc_values_list, t)
 
+            # Re-imprint latent after update
+            base_features = self.ic_imprinting(graph_data.x[:, -6:-3])
+            graph_data.x[:, :self.config.number_of_base_latent_features] = base_features
+
             prev_quantities = quantities
 
         total_loss = torch.mean(torch.stack(losses))
@@ -132,6 +136,10 @@ class FluidSimulation(LightningModule):
             }
             bc_values_list = [[bc.get_value(t) for bc in case.boundary_conditions]]
             graph_data = self.integrator.step(self.dynamics_gnn, graph_data, aux_nns, bc_values_list, t)
+
+            # Re-imprint latent after update
+            base_features = self.ic_imprinting(graph_data.x[:, -6:-3])
+            graph_data.x[:, :self.config.number_of_base_latent_features] = base_features
 
             prev_quantities = quantities
 
