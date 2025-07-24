@@ -18,7 +18,7 @@ class FluidSimulation(LightningModule):
         self.dynamics_gnn = DynamicsGNN(config)
         self.mapping_gnn = MappingGNN(config)
         self.ic_imprinting = ICImprintingNN(config)
-        self.integrator = TimeIntegrator(config.dt, config.number_of_base_latent_features, config)
+        self.integrator = TimeIntegrator(config.dt, config, self.ic_imprinting)
         self.physics_loss = PhysicsLoss(config)
         self.save_hyperparameters()
 
@@ -83,7 +83,7 @@ class FluidSimulation(LightningModule):
             prev_quantities = quantities
 
         total_loss = torch.mean(torch.stack(losses))
-        self.log("train_loss", total_loss, prog_bar=True)
+        self.log("train_loss", total_loss, prog_bar=True, batch_size=1)
 
         if self.current_epoch % self.config.log_case_params_frequency == 0:
             log_case_params([case], self.config.output_dir, self.current_epoch)
@@ -136,7 +136,7 @@ class FluidSimulation(LightningModule):
             prev_quantities = quantities
 
         val_loss = torch.mean(torch.stack(losses))
-        self.log("val_loss", val_loss, prog_bar=True)
+        self.log("val_loss", val_loss, prog_bar=True, batch_size=1)
         return val_loss
 
     def configure_optimizers(self):
