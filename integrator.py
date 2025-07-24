@@ -1,6 +1,6 @@
 # integrator.py
 import torch
-from torch_geometric.data import Batch, Data
+from torch_geometric.data import Data
 from config import SimulationConfig
 from model import DynamicsGNN
 from mesh import update_edges
@@ -11,20 +11,25 @@ class TimeIntegrator:
         self.base_features_dim = base_features_dim
         self.config = config
 
-    def compute_derivatives(self, gnn: DynamicsGNN, data: Data, aux_nns: dict[str, torch.nn.Module], bc_values: torch.Tensor, t: float) -> torch.Tensor:
+    def compute_derivatives(self, gnn: DynamicsGNN, data: Data, aux_nns: dict[str, torch.nn.Module], bc_values: list[torch.Tensor], t: float) -> torch.Tensor:
         # Apply boundary transformations
-        bc_transform_pressure = aux_nns['bc_transform_pressure']
         bc_transform_velocity = aux_nns['bc_transform_velocity']
+        bc_transform_pressure = aux_nns['bc_transform_pressure']
 
-        # Assuming bc_values has shape for pressure and velocity
-        pressure_bc = bc_transform_pressure(bc_values[0:1])  # Example slicing
-        velocity_bc = bc_transform_velocity(bc_values[1:])  # Example
+        # bc_values[0]: velocity [u, v], shape (2,)
+        # bc_values[1]: pressure [p], shape (1,)
+        velocity_bc = bc_transform_velocity(bc_values[0].unsqueeze(0))  # (1, number_of_velocities_bc_latent_features)
+        pressure_bc = bc_transform_pressure(bc_values[1].unsqueeze(0))  # (1, number_of_pressure_bc_latent_features)
 
-        # Update data.x with BC features (simplified)
+        # Update data.x with BC features
         mask_pressure = data.node_type == 1
         mask_velocity = data.node_type == 2
-        data.x[mask_pressure, gnn.config.number_of_base_latent_features:gnn.config.number_of_base_latent_features + gnn.config.number_of_pressure_bc_latent_features] = pressure_bc.repeat(mask_pressure.sum(), 1)
-        data.x[mask_velocity, gnn.config.number_of_base_latent_features:gnn.config.number_of_base_latent_features + gnn.config.number_of_velocities_bc_latent_features] = velocity_bc.repeat(mask_velocity.sum(), 1)
+
+        bc_start = self.config.number_of_base_latent_features
+        if mask_pressure.sum() > 0:
+            data.x[mask_pressure, bc_start:bc_start + self.config.number_of_pressure_bc_latent_features] = pressure_bc.repeat(mask_pressure.sum(), 1)
+        if mask_velocity.sum() > 0:
+            data.x[mask_velocity, bc_start:bc_start + self.config.number_of_velocities_bc_latent_features] = velocity_bc.repeat(mask_velocity.sum(), 1)
 
         # Forward pass to compute derivatives
         gnn(data)
@@ -36,7 +41,7 @@ class TimeIntegrator:
 
         # RK4 steps
         for i, single_data in enumerate(data_list):
-            single_data = update_edges(single_data.pos, self.config.k_neighbors, self.config.radius)
+            single_data.edge_index = update_edges(single_data.pos, self.config.k_neighbors, self.config.radius)
 
             bc_values = bc_values_list[i]
 
