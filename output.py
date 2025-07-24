@@ -1,4 +1,4 @@
-# output.py (updated to handle Case in log_case_params)
+# output.py
 import torch
 from torch_geometric.data import Data
 import pyvista as pv
@@ -12,9 +12,13 @@ from case import Case
 def save_vtk(graph_data: Data, mesh_data: Data, output_dir: str, epoch: int, case_id: str, step: int, config: SimulationConfig):
     os.makedirs(output_dir, exist_ok=True)
 
+    # Pad pos to 3D with z=0 for graph data
+    pos_cpu = graph_data.pos.cpu().numpy()
+    pos_3d = np.hstack([pos_cpu, np.zeros((pos_cpu.shape[0], 1), dtype=pos_cpu.dtype)])
+
     # Save graph data (nodes with features)
     graph_filename = os.path.join(output_dir, f"graph_epoch{epoch}_case{case_id}_step{step}.vtk")
-    points = pv.PolyData(graph_data.pos.cpu().numpy())
+    points = pv.PolyData(pos_3d)
     features = graph_data.x.cpu().numpy()
     points['features'] = features  # 14D features
     node_type = graph_data.node_type.cpu().numpy()
@@ -25,16 +29,18 @@ def save_vtk(graph_data: Data, mesh_data: Data, output_dir: str, epoch: int, cas
     mesh_filename = os.path.join(output_dir, f"mesh_epoch{epoch}_case{case_id}_step{step}.vtk")
     # Assuming background mesh is 50x50 grid
     nx, ny = config.nx, config.ny
-    width = graph_data.width.item() if torch.is_tensor(graph_data.width) else graph_data.width
-    height = graph_data.height.item() if torch.is_tensor(graph_data.height) else graph_data.height
+    width = graph_data.width.item()
+    height = graph_data.height.item()
     x = np.linspace(0, width, nx)
     y = np.linspace(0, height, ny)
     xx, yy = np.meshgrid(x, y)
     grid_points = np.vstack([xx.ravel(), yy.ravel()]).T
 
     interpolated_quantities = griddata(mesh_data.pos.cpu().numpy(), mesh_data.x.cpu().numpy(), grid_points, method='nearest')
-    grid = pv.RectilinearGrid(x, y)
-    grid.point_data['quantities'] = interpolated_quantities
+
+    # Make 3D flat grid
+    grid = pv.RectilinearGrid(x, y, [0])
+    grid.point_data['quantities'] = interpolated_quantities.reshape((nx, ny, 1), order='F')[:, :, 0]  # Flatten to 2D data on 3D grid
     grid.save(mesh_filename)
 
 def log_case_params(cases: List[Case], output_dir: str, epoch: int):
