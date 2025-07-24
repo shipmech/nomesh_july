@@ -78,6 +78,7 @@ class Case:
         node_type[list(self.mesh.boundary_node_sets['outlet'])] = 1  # Pressure
         node_type[list(self.mesh.boundary_node_sets['inlet'])] = 2  # Velocity
         node_type[list(self.mesh.boundary_node_sets['top'].union(self.mesh.boundary_node_sets['bottom']))] = 2  # Walls as velocity=0
+        node_type = node_type.unsqueeze(-1)  # Make 2D for node_dim=-2
 
         base_dim = self.config.number_of_base_latent_features
         bc_dim = max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)

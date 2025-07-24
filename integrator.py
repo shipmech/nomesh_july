@@ -22,8 +22,8 @@ class TimeIntegrator:
         pressure_bc = bc_transform_pressure(bc_values[1].unsqueeze(0))  # (1, number_of_pressure_bc_latent_features)
 
         # Update data.x with BC features
-        mask_pressure = data.node_type == 1
-        mask_velocity = data.node_type == 2
+        mask_pressure = data.node_type.squeeze(-1) == 1
+        mask_velocity = data.node_type.squeeze(-1) == 2
 
         bc_start = self.config.number_of_base_latent_features
         if mask_pressure.sum() > 0:

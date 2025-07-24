@@ -1,7 +1,7 @@
+# model.py
 import torch
 from torch import nn
 from torch_geometric.nn import MessagePassing
-from torch_geometric.data import Data
 from config import SimulationConfig
 from mesh import update_edges
 
@@ -83,23 +83,31 @@ class DynamicsGNN(MessagePassing):
     def message(self, x_j: torch.Tensor, x_i: torch.Tensor, pos_j: torch.Tensor, pos_i: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor) -> torch.Tensor:
         dist = torch.norm(pos_i - pos_j, dim=-1, keepdim=True)
         combined = torch.cat([x_j, x_i, dist], dim=-1)
-        src_type = node_type_j.long().item()  # Assuming batch size 1
-        dst_type = node_type_i.long().item()
-        key = f'{["free", "pressure", "velocity"][src_type]}_{["free", "pressure", "velocity"][dst_type]}'
-        return self.message_nns[key](combined)
+        src_type = node_type_j.squeeze(-1).long()
+        dst_type = node_type_i.squeeze(-1).long()
+        messages = torch.zeros(combined.shape[0], self.config.number_of_base_latent_features, device=combined.device)
+        for s in range(3):
+            for d in range(3):
+                mask = (src_type == s) & (dst_type == d)
+                if mask.sum() > 0:
+                    key = f'{["free", "pressure", "velocity"][s]}_{["free", "pressure", "velocity"][d]}'
+                    messages[mask] = self.message_nns[key](combined[mask])
+        return messages
 
     def update(self, aggr_out: torch.Tensor, x: torch.Tensor, node_type: torch.Tensor) -> torch.Tensor:
         base_features = x[:, :self.config.number_of_base_latent_features]
         bc_features = x[:, self.config.number_of_base_latent_features : self.config.number_of_base_latent_features + max(self.config.number_of_pressure_bc_latent_features, self.config.number_of_velocities_bc_latent_features)]
         phys_features = x[:, -6:]
 
-        mask_free = node_type == 0
-        mask_pressure = node_type == 1
-        mask_velocity = node_type == 2
+        mask_free = (node_type.squeeze(-1) == 0)
+        mask_pressure = (node_type.squeeze(-1) == 1)
+        mask_velocity = (node_type.squeeze(-1) == 2)
 
         updated_features = aggr_out.clone()
-        updated_features[mask_pressure] = self.bc_correction_pressure(base_features[mask_pressure], aggr_out[mask_pressure], bc_features[mask_pressure])
-        updated_features[mask_velocity] = self.bc_correction_velocity(base_features[mask_velocity], aggr_out[mask_velocity], bc_features[mask_velocity])
+        if mask_pressure.sum() > 0:
+            updated_features[mask_pressure] = self.bc_correction_pressure(base_features[mask_pressure], aggr_out[mask_pressure], bc_features[mask_pressure])
+        if mask_velocity.sum() > 0:
+            updated_features[mask_velocity] = self.bc_correction_velocity(base_features[mask_velocity], aggr_out[mask_velocity], bc_features[mask_velocity])
 
         # Compute physical quantities
         phys_out = torch.zeros_like(phys_features)
