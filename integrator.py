@@ -13,6 +13,7 @@ class TimeIntegrator:
     def compute_derivatives(self, gnn: DynamicsGNN, data: Data, aux_nns: dict[str, torch.nn.Module], bc_values: list[torch.Tensor], t: float) -> torch.Tensor:
         # Clone data to avoid in-place modification
         data = data.clone()
+        data.x = data.x.clone()
         
         # Apply boundary transformations
         bc_transform_velocity = aux_nns['bc_transform_velocity']
@@ -49,6 +50,7 @@ class TimeIntegrator:
 
             k1 = self.compute_derivatives(gnn, single_data, aux_nns, bc_values, t)
             temp_data = single_data.clone()
+            temp_data.x = temp_data.x.clone()
             left = temp_data.x[:, :-6]
             mid = temp_data.x[:, -6:-3] + 0.5 * self.dt * k1
             right = temp_data.x[:, -3:]
@@ -56,6 +58,7 @@ class TimeIntegrator:
             k2 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
+            temp_data.x = temp_data.x.clone()
             left = temp_data.x[:, :-6]
             mid = temp_data.x[:, -6:-3] + 0.5 * self.dt * k2
             right = temp_data.x[:, -3:]
@@ -63,6 +66,7 @@ class TimeIntegrator:
             k3 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
+            temp_data.x = temp_data.x.clone()
             left = temp_data.x[:, :-6]
             mid = temp_data.x[:, -6:-3] + self.dt * k3
             right = temp_data.x[:, -3:]
