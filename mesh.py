@@ -30,3 +30,9 @@ class Mesh:
     def restructure(self):
         # Placeholder for mesh restructuring (e.g., refinement)
         pass
+
+def update_edges(pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
+    edge_index = knn_graph(pos, k=k)
+    dist = torch.norm(pos[edge_index[0]] - pos[edge_index[1]], dim=1)
+    mask = dist < radius
+    return edge_index[:, mask]
