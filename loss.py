@@ -1,3 +1,4 @@
+# loss.py
 import torch
 from torch import nn
 from torch_geometric.nn import SplineConv
@@ -12,10 +13,10 @@ class PhysicsLoss(nn.Module):
         self.dt = config.dt
 
         # SplineConv for gradient computation (as per improvements)
-        in_channels = 3  # u, v, p
+        in_channels = 1  # Per quantity (u, v, p separately)
         out_channels = 2  # For first derivatives (x, y)
         self.spline_conv_first = SplineConv(in_channels, out_channels, dim=2, kernel_size=config.spline_kernel_size, degree=config.spline_degree, aggr=config.spline_aggr)
-        self.spline_conv_second = SplineConv(out_channels, out_channels, dim=2, kernel_size=config.spline_kernel_size, degree=config.spline_degree, aggr=config.spline_aggr)
+        self.spline_conv_second = SplineConv(in_channels, out_channels, dim=2, kernel_size=config.spline_kernel_size, degree=config.spline_degree, aggr=config.spline_aggr)
 
     def compute_gradients(self, quantities: torch.Tensor, pos: torch.Tensor, edge_index: torch.Tensor, pseudo: torch.Tensor) -> dict[str, torch.Tensor]:
         # quantities: [num_nodes, 3] for u, v, p
