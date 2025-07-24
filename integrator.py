@@ -2,16 +2,19 @@
 import torch
 from torch_geometric.data import Data
 from config import SimulationConfig
-from model import DynamicsGNN
+from model import DynamicsGNN, ICImprintingNN
 from mesh import update_edges
 
 class TimeIntegrator:
-    def __init__(self, dt: float, base_features_dim: int, config: SimulationConfig):
+    def __init__(self, dt: float, config: SimulationConfig, ic_imprinting: ICImprintingNN):
         self.dt = dt
-        self.base_features_dim = base_features_dim
         self.config = config
+        self.ic_imprinting = ic_imprinting
 
     def compute_derivatives(self, gnn: DynamicsGNN, data: Data, aux_nns: dict[str, torch.nn.Module], bc_values: list[torch.Tensor], t: float) -> torch.Tensor:
+        # Imprint current physical to latent
+        data.x[:, :self.config.number_of_base_latent_features] = self.ic_imprinting(data.x[:, -6:-3])
+
         # Apply boundary transformations
         bc_transform_velocity = aux_nns['bc_transform_velocity']
         bc_transform_pressure = aux_nns['bc_transform_pressure']
@@ -47,19 +50,19 @@ class TimeIntegrator:
 
             k1 = self.compute_derivatives(gnn, single_data.clone(), aux_nns, bc_values, t)
             temp_data = single_data.clone()
-            temp_data.x[:, :self.base_features_dim] += 0.5 * self.dt * k1
+            temp_data.x[:, -6:-3] += 0.5 * self.dt * k1
             k2 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
-            temp_data.x[:, :self.base_features_dim] += 0.5 * self.dt * k2
+            temp_data.x[:, -6:-3] += 0.5 * self.dt * k2
             k3 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
-            temp_data.x[:, :self.base_features_dim] += self.dt * k3
+            temp_data.x[:, -6:-3] += self.dt * k3
             k4 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + self.dt)
 
             update = (k1 + 2 * k2 + 2 * k3 + k4) / 6
-            single_data.x[:, :self.base_features_dim] += self.dt * update
+            single_data.x[:, -6:-3] += self.dt * update
 
             data_list[i] = single_data
 
