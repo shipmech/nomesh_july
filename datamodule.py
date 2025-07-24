@@ -1,3 +1,4 @@
+# datamodule.py (updated with collate_fn)
 import torch
 from torch.utils.data import Dataset, DataLoader
 from lightning.pytorch import LightningDataModule
@@ -42,10 +43,10 @@ class FluidDynamicsDataModule(LightningDataModule):
             self.val_dataset = FluidDynamicsDataset(self.config, is_training=False)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, batch_size=1, shuffle=True, num_workers=0)
+        return DataLoader(self.train_dataset, batch_size=1, shuffle=True, num_workers=0, collate_fn=lambda x: x[0])
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(self.val_dataset, batch_size=1, shuffle=False, num_workers=0)
+        return DataLoader(self.val_dataset, batch_size=1, shuffle=False, num_workers=0, collate_fn=lambda x: x[0])
 
     # Placeholder for Fenics (to be added later)
     def load_fenics_data(self) -> dict[str, torch.Tensor]:
