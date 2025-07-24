@@ -12,7 +12,7 @@ def main():
     
     trainer = L.Trainer(
         max_epochs=config.num_epochs,
-        accelerator='auto',
+        accelerator=config.device,
         devices='auto',
         enable_progress_bar=True,
         log_every_n_steps=2,
