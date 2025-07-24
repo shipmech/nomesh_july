@@ -46,23 +46,31 @@ class TimeIntegrator:
 
             k1 = self.compute_derivatives(gnn, single_data.clone(), aux_nns, bc_values, t)
             temp_data = single_data.clone()
-            temp_data.x = temp_data.x.clone()
-            temp_data.x[:, -6:-3] += 0.5 * self.dt * k1
+            left = temp_data.x[:, :-6]
+            mid = temp_data.x[:, -6:-3] + 0.5 * self.dt * k1
+            right = temp_data.x[:, -3:]
+            temp_data.x = torch.cat([left, mid, right], dim=-1)
             k2 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
-            temp_data.x = temp_data.x.clone()
-            temp_data.x[:, -6:-3] += 0.5 * self.dt * k2
+            left = temp_data.x[:, :-6]
+            mid = temp_data.x[:, -6:-3] + 0.5 * self.dt * k2
+            right = temp_data.x[:, -3:]
+            temp_data.x = torch.cat([left, mid, right], dim=-1)
             k3 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + 0.5 * self.dt)
 
             temp_data = single_data.clone()
-            temp_data.x = temp_data.x.clone()
-            temp_data.x[:, -6:-3] += self.dt * k3
+            left = temp_data.x[:, :-6]
+            mid = temp_data.x[:, -6:-3] + self.dt * k3
+            right = temp_data.x[:, -3:]
+            temp_data.x = torch.cat([left, mid, right], dim=-1)
             k4 = self.compute_derivatives(gnn, temp_data, aux_nns, bc_values, t + self.dt)
 
             update = (k1 + 2 * k2 + 2 * k3 + k4) / 6
-            single_data.x = single_data.x.clone()
-            single_data.x[:, -6:-3] += self.dt * update
+            left = single_data.x[:, :-6]
+            mid = single_data.x[:, -6:-3] + self.dt * update
+            right = single_data.x[:, -3:]
+            single_data.x = torch.cat([left, mid, right], dim=-1)
 
             data_list[i] = single_data
 
