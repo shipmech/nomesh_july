@@ -8,3 +8,6 @@ logs/
 # Ignore specific file
 11.bat
 instructions.txt
+testing.ipynb
+testing.py
+mesh_graph copy.py

@@ -6,19 +6,26 @@ from typing import Tuple, Dict
 class SimulationConfig:
     simulation_time: float = 2.0
     dt: float = 0.01
+
     vtk_save_frequency: int = 10
     log_case_params_frequency: int = 10
     output_dir: str = "./output"
+
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     #device: str = "cpu"
+
     domain_width_range: Tuple[float, float] = (0.5, 2.0)
     domain_height_range: Tuple[float, float] = (0.5, 2.0)
+
     num_nodes_range: Tuple[int, int] = (1000, 2000)
     validation_num_nodes: int = 1500
-    distribution_type: str = "uniform"
+    #distribution_type: str = "uniform"
+    
+    inlet_velocity_range: Tuple[float, float] = (-1.0, 1.0)
+    outlet_pressure_range: Tuple[float, float] = (-100.0, 100.0)
+
     radius: float = 0.05
-    inlet_velocity_range: Tuple[float, float] = (0.1, 1.0)
-    outlet_pressure_range: Tuple[float, float] = (0.0, 100.0)
+
     number_of_pressure_bc_latent_features: int = 4
     number_of_velocities_bc_latent_features: int = 4
     number_of_base_latent_features: int = 16

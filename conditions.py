@@ -4,19 +4,39 @@ import torch
 from utils import TimeHistoryData
 
 class BoundaryCondition(ABC):
-    def __init__(self, time_history: TimeHistoryData):
-        self.time_history = time_history
+    def __init__(self):
+        pass
 
-    def get_value(self, t: float) -> torch.Tensor:
+    def get_value(self, t: float):
+        pass
+
+    def get_derivative(self, t: float):
+        pass
+
+class SimpleBC(BoundaryCondition):
+    def __init__(self, times: torch.Tensor, values: torch.Tensor):
+        self.time_history = TimeHistoryData(times, values)
+    
+    def get_value(self, t: float):
         return self.time_history.get_value(t)
+    
+    def get_derivative(self, t: float):
+        return self.time_history.get_derivative(t)
 
-class PressureBC(BoundaryCondition):
-    def get_pressure(self, t: float) -> torch.Tensor:
-        return self.get_value(t)
+class PressBC(SimpleBC):
+    def __init__(self, times: torch.Tensor, values: torch.Tensor):
+        super().__init__(times, values)
+        self.type_name = 'Press'
 
-class VelocityBC(BoundaryCondition):
-    def get_velocity(self, t: float) -> torch.Tensor:
-        return self.get_value(t)
+class VelXBC(SimpleBC):
+    def __init__(self, times: torch.Tensor, values: torch.Tensor):
+        super().__init__(times, values)
+        self.type_name = 'VelX'
+
+class VelYBC(SimpleBC):
+    def __init__(self, times: torch.Tensor, values: torch.Tensor):
+        super().__init__(times, values)
+        self.type_name = 'VelY'
 
 class InitialCondition:
     def __init__(self, u: float = 0.0, v: float = 0.0, p: float = 0.0, device=None):
