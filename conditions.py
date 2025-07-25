@@ -13,30 +13,30 @@ class BoundaryCondition(ABC):
     def get_derivative(self, t: float):
         pass
 
-class SimpleBC(BoundaryCondition):
+class PressureBC(BoundaryCondition):
     def __init__(self, times: torch.Tensor, values: torch.Tensor):
         self.time_history = TimeHistoryData(times, values)
-    
+        self.type_name = 'Press'
+
     def get_value(self, t: float):
         return self.time_history.get_value(t)
     
     def get_derivative(self, t: float):
         return self.time_history.get_derivative(t)
 
-class PressBC(SimpleBC):
-    def __init__(self, times: torch.Tensor, values: torch.Tensor):
-        super().__init__(times, values)
-        self.type_name = 'Press'
+class VelocityBC(BoundaryCondition):
+    def __init__(self,
+                 times_u: torch.Tensor, values_u: torch.Tensor,
+                 times_v: torch.Tensor, values_v: torch.Tensor):
+        self.time_history_u = TimeHistoryData(times_u, values_u)
+        self.time_history_v = TimeHistoryData(times_v, values_v)
+        self.type_name = 'Vel'
 
-class VelXBC(SimpleBC):
-    def __init__(self, times: torch.Tensor, values: torch.Tensor):
-        super().__init__(times, values)
-        self.type_name = 'VelX'
-
-class VelYBC(SimpleBC):
-    def __init__(self, times: torch.Tensor, values: torch.Tensor):
-        super().__init__(times, values)
-        self.type_name = 'VelY'
+    def get_value(self, t: float):
+        return self.time_history_u.get_value(t), self.time_history_v.get_value(t)
+    
+    def get_derivative(self, t: float):
+        return self.time_history_u.get_derivative(t), self.time_history_v.get_derivative(t)
 
 class InitialCondition:
     def __init__(self, u: float = 0.0, v: float = 0.0, p: float = 0.0, device=None):
