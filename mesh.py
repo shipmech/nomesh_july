@@ -112,7 +112,7 @@ class MeshNodeDictData():
         for bc_index in self.dict_BC_index_to_BC_exact.keys():
             # remove nodes from other bcs which has been applied previously
             for bc_index_other in self.dict_BC_index_to_BC_exact.keys():
-                if bc_index_other != bc_index:
+                if bc_index_other < bc_index:
                    mask = torch.isin(self.dict_BC_index_to_node_indices_tensor[bc_index], self.dict_BC_index_to_node_indices_tensor[bc_index_other], invert=True)
                    self.dict_BC_index_to_node_indices_tensor[bc_index] = torch.masked_select(self.dict_BC_index_to_node_indices_tensor[bc_index], mask)
             # now apply bc in that order: walls, inlet, outlet
