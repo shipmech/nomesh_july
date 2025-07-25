@@ -1,6 +1,12 @@
 # utils.py
 import torch
 
+def to_torch_int(array, device):
+    return torch.tensor(array, dtype=torch.int64, device=device)
+
+def to_torch_float(array, device):
+    return torch.tensor(array, dtype=torch.float32, device=device)
+
 class TimeHistoryData:
     def __init__(self, times: torch.Tensor, values: torch.Tensor):
         self.times = times

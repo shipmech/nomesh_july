@@ -5,6 +5,7 @@ import numpy as np
 from geometry import Box, Geometry
 from mesh import GraphMesh, BackgroundMesh
 from conditions import InitialCondition, PressureBC, VelocityBC
+from utils import to_torch_int, to_torch_float
 
 class Case:
     def __init__(self, config):
@@ -43,27 +44,30 @@ class Case:
         vertices = torch.stack([xx.flatten(), yy.flatten()], dim=1).cpu().numpy()
         
         bc_geometry_selection_cond = {
-            'inlet': lambda nodes, device: torch.isclose(nodes[:, 0], torch.tensor(0.0, device)),
-            'outlet': lambda nodes, device: torch.isclose(nodes[:, 0], torch.tensor(self.geometry.width, device)),
-            'walls': lambda nodes, device: torch.isclose(nodes[:, 1], torch.tensor(self.geometry.height, device) or torch.isclose(nodes[:, 1], torch.tensor(0.0, device)))
+            'inlet': lambda nodes, device: torch.isclose(nodes[:, 0], to_torch_float([0.0], device)),
+            'outlet': lambda nodes, device: torch.isclose(nodes[:, 0], to_torch_float([self.geometry.width], device)),
+            'top': lambda nodes, device: torch.isclose(nodes[:, 1],  to_torch_float([self.geometry.height], device)),
+            'bottom': lambda nodes, device: torch.isclose(nodes[:, 1], to_torch_float([0.0], device))
         }
         
         # Set boundary conditions
         vel_values = torch.zeros((num_steps, 2), device=self.device)
-        walls_bc = [bc_geometry_selection_cond['walls'], VelocityBC(self.times, vel_values[0], self.times, vel_values[1])]
-        self.boundary_conditions.append(walls_bc)
+        top_bc = [VelocityBC(self.times, vel_values[:, 0], self.times, vel_values[:, 1]), bc_geometry_selection_cond['top']]
+        self.boundary_conditions.append(top_bc)
+        bottom_bc = [VelocityBC(self.times, vel_values[:, 0], self.times, vel_values[:, 1]), bc_geometry_selection_cond['bottom']]
+        self.boundary_conditions.append(bottom_bc)
 
         self.inlet_vel = np.random.uniform(*self.config.inlet_velocity_range)
         vel_values = torch.zeros((num_steps, 2), device=self.device)
         vel_values[:, 0] = self.inlet_vel  # u
         vel_values[:, 1] = 0.0  # v
-        inlet_bc = [bc_geometry_selection_cond['inlet'], VelocityBC(self.times, vel_values[0], self.times, vel_values[1])]
+        inlet_bc = [VelocityBC(self.times, vel_values[:, 0], self.times, vel_values[:, 1]), bc_geometry_selection_cond['inlet']]
         self.boundary_conditions.append(inlet_bc)
 
         self.outlet_press = np.random.uniform(*self.config.outlet_pressure_range)
         press_values = torch.zeros((num_steps, 1), device=self.device)
         press_values[:, 0] = self.outlet_press  # p
-        outlet_bc = [bc_geometry_selection_cond['outlet'], PressureBC(self.times, press_values)]
+        outlet_bc = [PressureBC(self.times, press_values), bc_geometry_selection_cond['outlet']]
         self.boundary_conditions.append(outlet_bc)
 
         # Create meshes

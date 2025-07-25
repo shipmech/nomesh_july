@@ -26,18 +26,21 @@ class SimulationConfig:
 
     radius: float = 0.05
 
-    number_of_pressure_bc_latent_features: int = 4
-    number_of_velocities_bc_latent_features: int = 4
     number_of_base_latent_features: int = 16
+    number_of_pressure_bc_latent_features: int = 2
+    number_of_velocities_bc_latent_features: int = 4
     hidden_dim: int = 64
     num_hops: int = 1
     k_neighbors: int = 10
+
     spline_kernel_size: int = 5
     spline_degree: int = 1
     spline_aggr: str = "mean"
+
     num_training_cases: int = 5
     num_epochs: int = 100
     learning_rate: float = 0.001
+
     nx: int = 50
     ny: int = 50
     viscosity: float = 0.01
