@@ -1,14 +1,52 @@
-# mesh.py
+from abc import ABC, abstractmethod
 import torch
-import torch.nn as nn
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import knn_graph
 
 import pymesh
 import numpy as np
 
-from d_case import BoundaryCondition
 from b_utils import to_torch_int, to_torch_float
+from b_utils import TimeHistoryData
+
+class BoundaryCondition(ABC):
+    def __init__(self):
+        pass
+
+    def get_value(self, t: float):
+        pass
+
+    def get_derivative(self, t: float):
+        pass
+
+class PressureBC(BoundaryCondition):
+    def __init__(self, times: torch.Tensor, values: torch.Tensor):
+        self.time_history = TimeHistoryData(times, values)
+        self.type_name = 'Press'
+
+    def get_value(self, t: float):
+        return self.time_history.get_value(t)
+    
+    def get_derivative(self, t: float):
+        return self.time_history.get_derivative(t)
+
+class VelocityBC(BoundaryCondition):
+    def __init__(self,
+                 times_u: torch.Tensor, values_u: torch.Tensor,
+                 times_v: torch.Tensor, values_v: torch.Tensor):
+        self.time_history_u = TimeHistoryData(times_u, values_u)
+        self.time_history_v = TimeHistoryData(times_v, values_v)
+        self.type_name = 'Vel'
+
+    def get_value(self, t: float):
+        u = self.time_history_u.get_value(t)
+        v = self.time_history_v.get_value(t)
+        return torch.tensor([u, v], dtype=u.dtype, device=u.device)
+    
+    def get_derivative(self, t: float):
+        dudt = self.time_history_u.get_derivative(t)
+        dvdt = self.time_history_v.get_derivative(t)
+        return torch.tensor([dudt, dvdt], dtype=dudt.dtype, device=dudt.device)
 
 class TriangleMeshGenerator():
     def __call__(self, nodes_positions  : np.array):  # nodes_positions: [number of nodes, 2]
@@ -216,7 +254,7 @@ class GraphMesh():
 
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_tensor
+        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_bc_indices_list
 
         num_base_f = self.config.number_of_base_latent_features
         dict_node_type_to_num_bc_f = {
@@ -266,7 +304,7 @@ class GraphMesh():
         for (src_type, relation, dst_type), edges_list in dict_types_tuple_to_edge_indices_list.items():
             indices = to_torch_int(edges_list, self.device)
             data[src_type, relation, dst_type].edge_index = indices
-            print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
+            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
 
         return data
 
@@ -312,7 +350,7 @@ class BackgroundMesh(GraphMesh):
 
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_tensor
+        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_bc_indices_list
 
         num_phys_f = self.config.num_phys_features                          # u, v, p   (u_t,v_t,p_t - derivatives)
         num_phys_spatial_d = self.config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
@@ -374,6 +412,6 @@ class BackgroundMesh(GraphMesh):
         for (src_type, relation, dst_type), edges_list in dict_types_tuple_to_edge_indices_list.items():
             indices = to_torch_int(edges_list, self.device)
             data[src_type, relation, dst_type].edge_index = indices
-            print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
+            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
 
         return data
