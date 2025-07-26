@@ -86,12 +86,18 @@ class MeshNodeDictData():
         self.dict_BC_index_to_geometry_selection_cond = {} # dict of geometry selection conditions functions
 
         self.dict_BC_index_to_node_indices_tensor = {} # dict of tensor of node indices
-        self.dict_node_index_to_BC_index = {}
+        # self.dict_node_index_to_BC_index = {} 
 
         self.tensor_node_index_to_enabled_BCs = to_torch_int(torch.zeros((len(self.nodes), 2)), self.device)
         self.tensor_node_index_to_type_index = to_torch_int(torch.zeros((len(self.nodes), 1)), self.device) # node index to node type index
 
-        self.dict_type_index_to_node_indices_tensor = { # dict of list of node indices
+        self.dict_type_index_to_node_indices_list = { # dict of list of node indices
+            0 : [],
+            1 : [],
+            2 : []
+        }
+
+        self.dict_type_index_to_bc_indices_list = { # dict of list of node indices
             0 : [],
             1 : [],
             2 : []
@@ -130,22 +136,27 @@ class MeshNodeDictData():
             for node_type_index, bc_type_tensor in self.dict_type_index_to_enabled_BCs.items():
                 if torch.allclose(self.tensor_node_index_to_enabled_BCs[node_index], bc_type_tensor):
                     self.tensor_node_index_to_type_index[node_index] = node_type_index
-                    self.dict_type_index_to_node_indices_tensor[node_type_index].append(node_index)
+                    self.dict_type_index_to_node_indices_list[node_type_index].append(node_index)
+                    
+                    for bc_index, node_indices in self.dict_BC_index_to_node_indices_tensor.items():
+                        if torch.isin(node_index, node_indices, assume_unique=True).max():
+                            self.dict_type_index_to_bc_indices_list[node_type_index].append(bc_index)
+
                     break
 
 
 class GraphMesh(nn.Module):
-    def __init__(self, device, config, nodes_positions : np.array, bc_list : list):
+    def __init__(self, device, config, nodes_positions: np.array, bc_list: list):
         self.device = device
         self.config = config
 
-        self.pos : torch.Tensor = None
-        self.edge_index : torch.Tensor = None
-        self.node_dict_data : MeshNodeDictData = None
+        self.pos: torch.Tensor = None
+        self.edge_index: torch.Tensor = None
+        self.node_dict_data: MeshNodeDictData = None
         self.graph_hetero_data = None
 
-        self.bc_transform_pressure = None
-        self.bc_transform_velocity = None
+        self.bc_transform_pressure: BCTransformingMLP= None
+        self.bc_transform_velocity: BCTransformingMLP = None
 
         self.initialize_mesh(nodes_positions, bc_list)
 
@@ -154,10 +165,34 @@ class GraphMesh(nn.Module):
         return self.graph_hetero_data
 
     def update_bc_features(self, t : float):
+
+        dict_bc_index_to_latent_value_tensor = {}
+
         for bc_index, bc_exact in self.node_dict_data.dict_BC_index_to_BC_exact.items():
             value_tensor = bc_exact.get_value(t)
-            node_indices_tensor = self.node_dict_data.dict_BC_index_to_node_indices_tensor[bc_index]
-            self.graph_hetero_data.bc_features[node_indices_tensor] = value_tensor
+            bctype_index = self.node_dict_data.dict_BC_index_to_BCType_index[bc_index]
+            latent_value_tensor = None
+            if bctype_index == 0:
+                latent_value_tensor = self.bc_transform_pressure(value_tensor)
+            elif bctype_index == 1:
+                latent_value_tensor = self.bc_transform_velocity(value_tensor)
+            
+            dict_bc_index_to_latent_value_tensor[bc_index] = latent_value_tensor
+
+        for node_type_index, bc_indices in self.node_dict_data.dict_type_index_to_bc_indices_list.items():
+            if len(bc_indices) == 0:
+                continue
+            node_type_name = self.node_dict_data.dict_type_index_to_type_name[node_type_index]
+            if node_type_name == 'Free':
+                continue
+
+            list_of_bc_values = []
+
+            for bc_index in bc_indices:
+                latent_value_tensor = dict_bc_index_to_latent_value_tensor[bc_index]
+                list_of_bc_values.append(latent_value_tensor)
+
+            self.graph_hetero_data[node_type_name].bc_features = torch.stack(list_of_bc_values, dim=0)
 
     def initialize_mesh(self, nodes_positions : np.array, bc_list : list):
         self.pos = to_torch_float(nodes_positions, self.device)
@@ -165,7 +200,7 @@ class GraphMesh(nn.Module):
 
         self.node_dict_data = MeshNodeDictData(self.device, self.pos)
         self.determine_BCs(bc_list)
-        self.determine_node_types()
+        self.node_dict_data.determine_node_types()
         self.graph_hetero_data = self.generate_graph_data()
 
         self.generate_BC_NNs()
@@ -188,9 +223,6 @@ class GraphMesh(nn.Module):
         for bc in bc_list:
             self.node_dict_data.add_BC(bc[0], bc[1])
         self.node_dict_data.apply_bcs()
-
-    def determine_node_types(self):
-        self.node_dict_data.determine_node_types()
 
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
@@ -269,6 +301,29 @@ class BackgroundMesh(GraphMesh):
         self.determine_node_types()
         self.graph_hetero_data = self.generate_graph_data()
 
+    def update_bc_features(self, t : float):
+
+        dict_bc_index_to_physics_value_tensor = {}
+
+        for bc_index, bc_exact in self.node_dict_data.dict_BC_index_to_BC_exact.items():
+            value_tensor = bc_exact.get_value(t)
+            dict_bc_index_to_physics_value_tensor[bc_index] = value_tensor
+
+        for node_type_index, bc_indices in self.node_dict_data.dict_type_index_to_bc_indices_list.items():
+            if len(bc_indices) == 0:
+                continue
+            node_type_name = self.node_dict_data.dict_type_index_to_type_name[node_type_index]
+            if node_type_name == 'Free':
+                continue
+
+            list_of_bc_values = []
+
+            for bc_index in bc_indices:
+                value_tensor = dict_bc_index_to_physics_value_tensor[bc_index]
+                list_of_bc_values.append(value_tensor)
+
+            self.graph_hetero_data[node_type_name].bc_features = torch.stack(list_of_bc_values, dim=0)
+
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
         dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_tensor
@@ -277,6 +332,12 @@ class BackgroundMesh(GraphMesh):
         num_phys_spatial_d = self.config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
         num_phys_spatial_dd = self.config.num_phys_spatial_features_dd      # u_xx, u_yy, v_xx, v_yy
         
+        dict_node_type_to_num_bc_f = {
+            'Free' : 0,
+            'Press' : 1,
+            'NoSlip' : 2,
+        }
+
         data = HeteroData()
 
         # set pos for each node type and zero features for each node type
@@ -301,6 +362,10 @@ class BackgroundMesh(GraphMesh):
             data[node_type_name].phys_features_spatial_dd = torch.zeros((data[node_type_name].pos.shape[0], num_phys_spatial_dd),
                                                                         dtype=torch.float32,
                                                                         device=self.device)
+
+            data[node_type_name].bc_features = torch.zeros((data[node_type_name].pos.shape[0], dict_node_type_to_num_bc_f[node_type_name]),
+                                                           dtype=torch.float32,
+                                                           device=self.device)
 
         # set edge indices
         edge_index = self.edge_index

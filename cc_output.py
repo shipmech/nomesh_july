@@ -156,6 +156,20 @@ def save_background_vtk(background_mesh: BackgroundMesh, output_dir: str, epoch:
     grid.point_data['v_xx'] = phys_spatial_dd[:, 2]
     grid.point_data['v_yy'] = phys_spatial_dd[:, 3]
 
+    if 'Press' in data.node_types:
+        press_dim = data['Press'].bc_features.shape[1]
+        press_bc = np.zeros((N, press_dim), dtype=np.float32)
+        press_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[1])
+        press_bc[press_nodes] = data['Press'].bc_features.detach().cpu().numpy()
+        grid.point_data['press_bc_features'] = press_bc
+
+    if 'NoSlip' in data.node_types:
+        noslip_dim = data['NoSlip'].bc_features.shape[1]
+        noslip_bc = np.zeros((N, noslip_dim), dtype=np.float32)
+        noslip_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[2])
+        noslip_bc[noslip_nodes] = data['NoSlip'].bc_features.detach().cpu().numpy()
+        grid.point_data['noslip_bc_features'] = noslip_bc
+
     # Add BC index
     bc_index_array = np.full(N, -1, dtype=np.int32)
     for bc_idx, node_tensor in background_mesh.node_dict_data.dict_BC_index_to_node_indices_tensor.items():
