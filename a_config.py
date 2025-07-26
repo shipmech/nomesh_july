@@ -32,8 +32,8 @@ class SimulationConfig:
     number_of_base_latent_features: int = 16
     number_of_pressure_bc_latent_features: int = 2
     number_of_velocities_bc_latent_features: int = 4
-    hidden_dim: int = 64 #?
-    num_hops: int = 1    #?   
+
+    message_passing_hidden_dim: int = 64
 
     num_phys_features: int = 3                  # u, v, p   (u_t,v_t,p_t - derivatives)
     num_phys_spatial_features_d: int = 6        # u_x, u_y, v_x, v_y, p_x, p_y
@@ -48,4 +48,5 @@ class SimulationConfig:
 
     viscosity: float = 0.01
     density: float = 1.0
-    lambda_ic: float = 1.0  #?
+    lambda_ic: float = 1.0
+    lambda_bc: float = 1.0      #Weight for BC loss

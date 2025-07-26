@@ -44,7 +44,7 @@ class FluidSimulation(LightningModule):
             out_channels = num_base_f
             for dst in node_types:
                 edge_type = (src, 'influences', dst)
-                conv_dict[edge_type] = MessagePassingMLPConv(src_channels, out_channels, hidden_dim=config.hidden_dim)
+                conv_dict[edge_type] = MessagePassingMLPConv(src_channels, out_channels, hidden_dim=config.message_passing_hidden_dim)
         self.message_passing_conv = HeteroConv(conv_dict, aggr='sum')
 
         self.save_hyperparameters()
@@ -72,6 +72,22 @@ class FluidSimulation(LightningModule):
 
     def compute_ic_loss(self, quantities: torch.Tensor, ground_truth_ic: torch.Tensor) -> torch.Tensor:
         return torch.mean((quantities - ground_truth_ic) ** 2)
+    
+    def compute_bc_loss(self, model: Model) -> torch.Tensor:
+        data = model.background_mesh.graph_hetero_data
+        bc_loss = torch.tensor(0.0, device=self.device)
+
+        if 'Press' in data.node_types and data['Press'].num_nodes > 0:
+            pred_p = data['Press'].phys_features[:, 2]  # Predicted pressure
+            target_p = data['Press'].bc_features.squeeze(-1) if data['Press'].bc_features.dim() > 1 else data['Press'].bc_features  # BC pressure (handle [N,1] or [N])
+            bc_loss += torch.mean((pred_p - target_p) ** 2)
+
+        if 'NoSlip' in data.node_types and data['NoSlip'].num_nodes > 0:
+            pred_uv = data['NoSlip'].phys_features[:, 0:2]  # Predicted [u, v]
+            target_uv = data['NoSlip'].bc_features  # BC [u, v] [N,2]
+            bc_loss += torch.mean((pred_uv - target_uv) ** 2)
+
+        return bc_loss
 
     def collect_background_features(self, model: Model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         data = model.background_mesh.graph_hetero_data
@@ -128,7 +144,9 @@ class FluidSimulation(LightningModule):
             quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
             physics_loss = self.compute_physics_loss(quantities, derivatives, gradients, second_gradients)
-            losses.append(physics_loss)
+            bc_loss = self.compute_bc_loss(model)
+            loss = physics_loss + self.config.lambda_bc * bc_loss
+            losses.append(loss)
 
             if step % self.config.vtk_save_frequency == 0:
                 save_graph_vtk(model.graph_mesh, self.config.output_dir, self.current_epoch, str(batch_idx), step)
@@ -174,7 +192,9 @@ class FluidSimulation(LightningModule):
             quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
             physics_loss = self.compute_physics_loss(quantities, derivatives, gradients, second_gradients)
-            losses.append(physics_loss)
+            bc_loss = self.compute_bc_loss(model)
+            loss = physics_loss + self.config.lambda_bc * bc_loss
+            losses.append(loss)
 
             if step % self.config.vtk_save_frequency == 0:
                 save_graph_vtk(model.graph_mesh, self.config.output_dir, self.current_epoch, f"val_{batch_idx}", step)
