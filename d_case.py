@@ -106,6 +106,8 @@ class Case:
         ny = int(np.sqrt(num_nodes / aspect))
         nx = int(num_nodes / ny)
 
+        self.num_nodes = nx * ny
+
         x = torch.linspace(0, self.geometry.width, nx, device=self.device)
         y = torch.linspace(0, self.geometry.height, ny, device=self.device)
         xx, yy = torch.meshgrid(x, y, indexing='ij')
