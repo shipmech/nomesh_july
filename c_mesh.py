@@ -7,7 +7,6 @@ from torch_geometric.nn import knn_graph
 import pymesh
 import numpy as np
 
-from bb_nn_models import BCTransformingMLP
 from d_case import BoundaryCondition
 from b_utils import to_torch_int, to_torch_float
 
@@ -157,18 +156,7 @@ class GraphMesh():
 
         self.initialize_mesh(nodes_positions, bc_list)
 
-        self.shared_NN = {} # must be initialized in forward, must contain 'bc_transform_pressure', 'bc_transform_velocity'
-
-    def set_shared_NN(self, shared_NN):
-        self.shared_NN = shared_NN
-
-    def generate_shared_NNs(self):
-        bc_transform_pressure = BCTransformingMLP(1, self.config.number_of_pressure_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # pressure BC
-        bc_transform_velocity = BCTransformingMLP(2, self.config.number_of_velocities_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # velocity BC (u,v)
-
-        return bc_transform_pressure, bc_transform_velocity
-
-    def update_bc_features(self, t : float):
+    def update_bc_features(self, t : float, bc_transform_pressure, bc_transform_velocity):
 
         dict_bc_index_to_latent_value_tensor = {}
 
@@ -177,9 +165,9 @@ class GraphMesh():
             bctype_index = self.node_dict_data.dict_BC_index_to_BCType_index[bc_index]
             latent_value_tensor = None
             if bctype_index == 0:
-                latent_value_tensor = self.shared_NN['bc_transform_pressure'](value_tensor)
+                latent_value_tensor = bc_transform_pressure(value_tensor)
             elif bctype_index == 1:
-                latent_value_tensor = self.shared_NN['bc_transform_velocity'](value_tensor)
+                latent_value_tensor = bc_transform_velocity(value_tensor)
             
             dict_bc_index_to_latent_value_tensor[bc_index] = latent_value_tensor
 

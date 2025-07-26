@@ -1,11 +1,8 @@
 # case.py
 import torch
-import torch.nn as nn
 from torch_geometric.nn import radius
-from torch_geometric.nn import HeteroConv
 
 from d_case import Case
-from bb_nn_models import TransformConv, MessagePassingMLPConv
 
 class Model():
     def __init__(self, case : Case):
@@ -21,69 +18,8 @@ class Model():
         self.times = torch.linspace(0, self.max_time, self.n_time_step, device=self.device)
 
         self.current_time = 0.0
-
-        self.shared_NN = {} # must be initialized in forward, must contain
-                            # 'transform_conv', 'transform_conv_dt', 'reverse_transform_conv', 'message_passing_conv'
-
-    def set_shared_NN(self, shared_NN):
-        self.shared_NN = shared_NN
-
-    def generate_shared_NNs(self):
-        # Construct SplineConv for transfer (bipartite, source to target)
-        num_base_f = self.config.number_of_base_latent_features
-
-        # phys + spatial_d + spatial_dd
-        physical_channels = self.config.num_phys_features + \
-                            self.config.num_phys_spatial_features_d + \
-                            self.config.num_phys_spatial_features_dd
         
-        physical_dt_channels = self.config.num_phys_features  # Assuming phys_features_dt has same dim as phys_features
-
-        dim = 2  # 2 for (x,y)
-        kernel_size = self.config.kernel_size_transfer
-
-        transform_conv = TransformConv((num_base_f, 0), physical_channels, dim=dim, kernel_size=[kernel_size,kernel_size]).to(self.device)
-        transform_conv_dt = TransformConv((num_base_f, 0), physical_dt_channels, dim=dim, kernel_size=[kernel_size,kernel_size]).to(self.device) # Separate conv for dt
-        reverse_transform_conv = TransformConv((physical_channels, 0), num_base_f, dim=dim, kernel_size=[kernel_size, kernel_size]).to(self.device)
-
-        # define_message_passing_conv
-        data = self.graph_mesh.graph_hetero_data
-        node_types, edge_types = data.metadata()
-        
-        base_dim = self.config.number_of_base_latent_features
-        bc_dims = {
-            'Free': 0,
-            'Press': self.config.number_of_pressure_bc_latent_features,
-            'NoSlip': self.config.number_of_velocities_bc_latent_features,
-        }
-        
-        conv_dict = {}
-        for edge_type in edge_types:
-            src, _, dst = edge_type
-            src_channels = base_dim + bc_dims[src]
-            conv_dict[edge_type] = MessagePassingMLPConv(
-                src_channels=src_channels,
-                out_channels=base_dim,
-                hidden_dim=self.config.hidden_dim,
-                aggr='add'  # or 'mean' if preferred
-            )
-        
-        message_passing_conv = HeteroConv(conv_dict, aggr='sum')
-
-        bc_transform_pressure, bc_transform_velocity = self.graph_mesh.generate_shared_NNs()
-
-        dict_shared_NN = {
-            'bc_transform_pressure': bc_transform_pressure,
-            'bc_transform_velocity': bc_transform_velocity,
-            'transform_conv': transform_conv,
-            'transform_conv_dt': transform_conv_dt,
-            'reverse_transform_conv': reverse_transform_conv,
-            'message_passing_conv': message_passing_conv,
-        }
-
-        return dict_shared_NN
-        
-    def transfer_latent_to_physics(self):
+    def transfer_latent_to_physics(self, transform_conv, transform_conv_dt):
         data_source = self.graph_mesh.graph_hetero_data
         data_target = self.background_mesh.graph_hetero_data
         node_types = ['Free', 'Press', 'NoSlip']  # From your MeshNodeDictData
@@ -128,8 +64,8 @@ class Model():
         x = (source_base, None)
         x_dt = (source_base_dt, None)
 
-        out = self.shared_NN['transform_conv'](x=x, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
-        out_dt = self.shared_NN['transform_conv_dt'](x=x_dt, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
+        out = transform_conv(x=x, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
+        out_dt = transform_conv_dt(x=x_dt, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
 
         # Split and assign to target per type
         data_target = self.background_mesh.graph_hetero_data
@@ -140,7 +76,7 @@ class Model():
             data_target[t].phys_features_spatial_dd = out[s, self.config.num_phys_features + self.config.num_phys_spatial_features_d:]
             data_target[t].phys_features_dt = out_dt[s]
 
-    def transfer_physics_to_latent(self):
+    def transfer_physics_to_latent(self, reverse_transform_conv):
         data_source = self.background_mesh.graph_hetero_data  # Now background is source (physics)
         data_target = self.graph_mesh.graph_hetero_data  # Graph is target (latents)
         node_types = ['Free', 'Press', 'NoSlip']  # Same node types
@@ -187,7 +123,7 @@ class Model():
 
         x = (source_phys, None)
 
-        out = self.reverse_transform_conv(x=x, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
+        out = reverse_transform_conv(x=x, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
 
         # Assign to target (graph_mesh) base_features
         data_target = self.graph_mesh.graph_hetero_data
@@ -195,14 +131,11 @@ class Model():
             s = target_offsets[t]
             data_target[t].base_features = out[s]
 
-    def update_initial_conditions(self):
-        self.transfer_physics_to_latent(self)
-        self.transfer_latent_to_physics(self)
+    def update_BC(self, t, bc_transform_pressure, bc_transform_velocity):
+        self.graph_mesh.update_bc_features(t, bc_transform_pressure, bc_transform_velocity)
+        self.background_mesh.update_bc_features(t)
 
-    def update_BC(self, t):
-        self.graph_mesh.update_bc_features(t)
-
-    def compute_base_features_dt(self):
+    def compute_base_features_dt(self, message_passing_conv):
         data = self.graph_mesh.graph_hetero_data
         node_types = data.node_types  # ['Free', 'Press', 'NoSlip']
         
@@ -215,13 +148,13 @@ class Model():
             x_dict[t] = torch.cat([base, bc], dim=-1) if bc.size(1) > 0 else base
         
         # Run message passing
-        dt_dict = self.message_passing_conv(x_dict, data.edge_index_dict)
+        dt_dict = message_passing_conv(x_dict, data.edge_index_dict)
         
         # Assign dt
         for t in node_types:
             data[t].base_features_dt = dt_dict[t]
 
-    def next_time_step(self):
+    def next_time_step(self, message_passing_conv):
         # update BC
         # Update base features by integraition RK4
         # Update base features dt by compute_base_features_dt at new time step
@@ -238,28 +171,28 @@ class Model():
         # RK4 steps; since BC(t) changes, update BC at intermediate times
         # k1 = f(t, y)
         self.update_BC(self.current_time)
-        self.compute_base_features_dt()
+        self.compute_base_features_dt(message_passing_conv)
         k1 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k2 = f(t + dt/2, y + dt/2 * k1)
         for t in node_types:
             data[t].base_features = original_base[t] + (dt / 2) * k1[t]
         #self.update_BC(self.current_time + dt / 2)
-        self.compute_base_features_dt()
+        self.compute_base_features_dt(message_passing_conv)
         k2 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k3 = f(t + dt/2, y + dt/2 * k2)
         for t in node_types:
             data[t].base_features = original_base[t] + (dt / 2) * k2[t]
         #self.update_BC(self.current_time + dt / 2)
-        self.compute_base_features_dt()
+        self.compute_base_features_dt(message_passing_conv)
         k3 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k4 = f(t + dt, y + dt * k3)
         for t in node_types:
             data[t].base_features = original_base[t] + dt * k3[t]
         #self.update_BC(self.current_time + dt)
-        self.compute_base_features_dt()
+        self.compute_base_features_dt(message_passing_conv)
         k4 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # Update: y += dt/6 * (k1 + 2*k2 + 2*k3 + k4)
@@ -269,4 +202,4 @@ class Model():
         # Advance time and recompute dt at new time step
         self.current_time += dt
         self.update_BC(self.current_time)
-        self.compute_base_features_dt()
+        self.compute_base_features_dt(message_passing_conv)
