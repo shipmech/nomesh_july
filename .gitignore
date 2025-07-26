@@ -3,6 +3,9 @@
 __pycache__/
 torch_pymesh_docker/
 output/
+output1/
+output2/
+output3/
 logs/
 test/
 

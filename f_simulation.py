@@ -70,7 +70,7 @@ class FluidSimulation(LightningModule):
         loss_momentum_x = torch.mean(momentum_x ** 2)
         loss_momentum_y = torch.mean(momentum_y ** 2)
 
-        return loss_continuity + loss_momentum_x + loss_momentum_y
+        return 10 * loss_continuity + loss_momentum_x + loss_momentum_y
 
     def compute_ic_loss(self, quantities: torch.Tensor, ground_truth_ic: torch.Tensor) -> torch.Tensor:
         return torch.mean((quantities - ground_truth_ic) ** 2)

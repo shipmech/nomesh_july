@@ -4,7 +4,7 @@ from typing import Tuple, Dict
 
 @dataclass
 class SimulationConfig:
-    simulation_time: float = 2.0
+    simulation_time: float = 1.0
     dt: float = 0.01
 
     vtk_save_frequency: int = 1
@@ -21,32 +21,32 @@ class SimulationConfig:
     validation_num_nodes: int = 1500
     #distribution_type: str = "uniform"
     
-    inlet_velocity_range: Tuple[float, float] = (-1.0, 1.0)
-    outlet_pressure_range: Tuple[float, float] = (-100.0, 100.0)
+    inlet_velocity_range: Tuple[float, float] = (0, 1.0)
+    outlet_pressure_range: Tuple[float, float] = (-1.0, 1.0)
 
-    number_bc_nn_hidden_dim: int = 2
+    number_bc_nn_hidden_dim: int = 64
 
-    k_neighbors: int = 10
+    k_neighbors: int = 32
     radius: float = 0.05
 
-    number_of_base_latent_features: int = 4
-    number_of_pressure_bc_latent_features: int = 1
-    number_of_velocities_bc_latent_features: int = 1
+    number_of_base_latent_features: int = 16
+    number_of_pressure_bc_latent_features: int = 4
+    number_of_velocities_bc_latent_features: int = 8
 
-    message_passing_hidden_dim: int = 2
+    message_passing_hidden_dim: int = 64
 
     num_phys_features: int = 3                  # u, v, p   (u_t,v_t,p_t - derivatives)
     num_phys_spatial_features_d: int = 6        # u_x, u_y, v_x, v_y, p_x, p_y
     num_phys_spatial_features_dd: int = 4       # u_xx, u_yy, v_xx, v_yy
 
     knn_radius_transfer: float = 0.05
-    kernel_size_transfer: int = 5
+    kernel_size_transfer: int = 10
 
-    num_training_cases: int = 1
-    num_epochs: int = 100
+    num_training_cases: int = 20
+    num_epochs: int = 10000
     learning_rate: float = 0.01
 
     viscosity: float = 0.01
     density: float = 1.0
-    lambda_ic: float = 1.0
-    lambda_bc: float = 1.0      #Weight for BC loss
+    lambda_ic: float = 2.0
+    lambda_bc: float = 10.0      #Weight for BC loss
