@@ -145,7 +145,7 @@ class MeshNodeDictData():
                     break
 
 
-class GraphMesh(nn.Module):
+class GraphMesh():
     def __init__(self, device, config, nodes_positions: np.array, bc_list: list):
         self.device = device
         self.config = config
@@ -155,14 +155,18 @@ class GraphMesh(nn.Module):
         self.node_dict_data: MeshNodeDictData = None
         self.graph_hetero_data = None
 
-        self.bc_transform_pressure: BCTransformingMLP= None
-        self.bc_transform_velocity: BCTransformingMLP = None
-
         self.initialize_mesh(nodes_positions, bc_list)
 
-    def forward(self, t):
-        self.update_bc_features(t)
-        return self.graph_hetero_data
+        self.shared_NN = {} # must be initialized in forward, must contain 'bc_transform_pressure', 'bc_transform_velocity'
+
+    def set_shared_NN(self, shared_NN):
+        self.shared_NN = shared_NN
+
+    def generate_shared_NNs(self):
+        bc_transform_pressure = BCTransformingMLP(1, self.config.number_of_pressure_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # pressure BC
+        bc_transform_velocity = BCTransformingMLP(2, self.config.number_of_velocities_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # velocity BC (u,v)
+
+        return bc_transform_pressure, bc_transform_velocity
 
     def update_bc_features(self, t : float):
 
@@ -173,9 +177,9 @@ class GraphMesh(nn.Module):
             bctype_index = self.node_dict_data.dict_BC_index_to_BCType_index[bc_index]
             latent_value_tensor = None
             if bctype_index == 0:
-                latent_value_tensor = self.bc_transform_pressure(value_tensor)
+                latent_value_tensor = self.shared_NN['bc_transform_pressure'](value_tensor)
             elif bctype_index == 1:
-                latent_value_tensor = self.bc_transform_velocity(value_tensor)
+                latent_value_tensor = self.shared_NN['bc_transform_velocity'](value_tensor)
             
             dict_bc_index_to_latent_value_tensor[bc_index] = latent_value_tensor
 
@@ -202,8 +206,6 @@ class GraphMesh(nn.Module):
         self.determine_BCs(bc_list)
         self.node_dict_data.determine_node_types()
         self.graph_hetero_data = self.generate_graph_data()
-
-        self.generate_BC_NNs()
 
     def generate_edges(self, pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
         # pos: [num_nodes, 2 - num_coordinates]
@@ -280,10 +282,6 @@ class GraphMesh(nn.Module):
 
         return data
 
-    def generate_BC_NNs(self):
-        self.bc_transform_pressure = BCTransformingMLP(1, self.config.number_of_pressure_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # pressure BC
-        self.bc_transform_velocity = BCTransformingMLP(2, self.config.number_of_velocities_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # velocity BC (u,v)
-
 
 class BackgroundMesh(GraphMesh):
     def __init__(self, device, config, nodes_positions : np.array, bc_list : list):
@@ -298,7 +296,7 @@ class BackgroundMesh(GraphMesh):
 
         self.node_dict_data = MeshNodeDictData(self.device, self.pos)
         self.determine_BCs(bc_list)
-        self.determine_node_types()
+        self.node_dict_data.determine_node_types()
         self.graph_hetero_data = self.generate_graph_data()
 
     def update_bc_features(self, t : float):
