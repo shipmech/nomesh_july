@@ -11,13 +11,6 @@ class Model():
 
         self.graph_mesh = case.graph_mesh
         self.background_mesh = case.background_mesh
-
-        self.max_time = self.config.simulation_time
-        self.dt = self.config.dt
-        self.n_time_step = int(self.max_time / self.time_step) + 1
-        self.times = torch.linspace(0, self.max_time, self.n_time_step, device=self.device)
-
-        self.current_time = 0.0
         
     def transfer_latent_to_physics(self, transform_conv, transform_conv_dt):
         data_source = self.graph_mesh.graph_hetero_data
@@ -154,14 +147,13 @@ class Model():
         for t in node_types:
             data[t].base_features_dt = dt_dict[t]
 
-    def next_time_step(self, message_passing_conv):
+    def next_time_step(self, current_time, delta_t, bc_transform_pressure, bc_transform_velocity, message_passing_conv):
         # update BC
         # Update base features by integraition RK4
-        # Update base features dt by compute_base_features_dt at new time step
+        # Update base features_dt by compute_base_features_dt at new time step
 
         # Assumes current time step is managed externally; here we advance base_features using RK4
         # Need current t; assume self.current_time is set (add self.current_time = 0.0 in _initialize if needed)
-        dt = self.dt
         data = self.graph_mesh.graph_hetero_data
         node_types = data.node_types
         
@@ -170,36 +162,35 @@ class Model():
         
         # RK4 steps; since BC(t) changes, update BC at intermediate times
         # k1 = f(t, y)
-        self.update_BC(self.current_time)
+        self.update_BC(self.current_time, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k1 = {t: data[t].base_features_dt.clone() for t in node_types}
         
-        # k2 = f(t + dt/2, y + dt/2 * k1)
+        # k2 = f(t + delta_t/2, y + delta_t/2 * k1)
         for t in node_types:
-            data[t].base_features = original_base[t] + (dt / 2) * k1[t]
-        #self.update_BC(self.current_time + dt / 2)
+            data[t].base_features = original_base[t] + (delta_t / 2) * k1[t]
+        #self.update_BC(self.current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k2 = {t: data[t].base_features_dt.clone() for t in node_types}
         
-        # k3 = f(t + dt/2, y + dt/2 * k2)
+        # k3 = f(t + delta_t/2, y + delta_t/2 * k2)
         for t in node_types:
-            data[t].base_features = original_base[t] + (dt / 2) * k2[t]
-        #self.update_BC(self.current_time + dt / 2)
+            data[t].base_features = original_base[t] + (delta_t / 2) * k2[t]
+        #self.update_BC(self.current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k3 = {t: data[t].base_features_dt.clone() for t in node_types}
         
-        # k4 = f(t + dt, y + dt * k3)
+        # k4 = f(t + delta_t, y + delta_t * k3)
         for t in node_types:
-            data[t].base_features = original_base[t] + dt * k3[t]
-        #self.update_BC(self.current_time + dt)
+            data[t].base_features = original_base[t] + delta_t * k3[t]
+        #self.update_BC(self.current_time + delta_t, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k4 = {t: data[t].base_features_dt.clone() for t in node_types}
         
-        # Update: y += dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+        # Update: y += delta_t/6 * (k1 + 2*k2 + 2*k3 + k4)
         for t in node_types:
-            data[t].base_features = original_base[t] + (dt / 6) * (k1[t] + 2 * k2[t] + 2 * k3[t] + k4[t])
+            data[t].base_features = original_base[t] + (delta_t / 6) * (k1[t] + 2 * k2[t] + 2 * k3[t] + k4[t])
         
-        # Advance time and recompute dt at new time step
-        self.current_time += dt
-        self.update_BC(self.current_time)
+        # Advance time and recompute features_dt at new time step
+        self.update_BC(current_time + delta_t, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)

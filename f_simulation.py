@@ -17,7 +17,6 @@ class FluidSimulation(LightningModule):
         self.config = config
         self.viscosity = config.viscosity
         self.density = config.density
-        self.dt = config.dt
 
         # Shared NNs as learnable modules
         self.bc_transform_pressure = BCTransformingMLP(1, config.number_of_pressure_bc_latent_features, config.number_bc_nn_hidden_dim)
@@ -47,15 +46,6 @@ class FluidSimulation(LightningModule):
                 edge_type = (src, 'influences', dst)
                 conv_dict[edge_type] = MessagePassingMLPConv(src_channels, out_channels, hidden_dim=config.hidden_dim)
         self.message_passing_conv = HeteroConv(conv_dict, aggr='sum')
-        
-        self.shared_nn_dict = {
-            'bc_transform_pressure': self.bc_transform_pressure,
-            'bc_transform_velocity': self.bc_transform_velocity,
-            'transform_conv': self.transform_conv,
-            'transform_conv_dt': self.transform_conv_dt,
-            'reverse_transform_conv': self.reverse_transform_conv,
-            'message_passing_conv': self.message_passing_conv,
-        }
 
         self.save_hyperparameters()
 
@@ -107,20 +97,17 @@ class FluidSimulation(LightningModule):
 
     def training_step(self, case: Case, batch_idx: int) -> torch.Tensor:
         model = Model(case)
-        shared_nn_dict = {
-            'bc_transform_pressure': self.bc_transform_pressure,
-            'bc_transform_velocity': self.bc_transform_velocity,
-            'transform_conv': self.transform_conv,
-            'transform_conv_dt': self.transform_conv_dt,
-            'reverse_transform_conv': self.reverse_transform_conv,
-            'message_passing_conv': self.message_passing_conv,
-        }
-        model.set_shared_NN(shared_nn_dict)
 
-        model.current_time = 0.0
-        model.update_BC(model.current_time)
-        model.compute_base_features_dt()
-        model.transfer_latent_to_physics()
+        max_time = self.config.simulation_time
+        delta_t = self.config.dt
+        n_time_step = int(max_time / delta_t) + 1
+        times = torch.linspace(0, max_time, n_time_step, device=self.device)
+
+        current_time = 0.0
+
+        model.update_BC(current_time, self.bc_transform_pressure, self.bc_transform_velocity)
+        model.compute_base_features_dt(self.message_passing_conv)
+        model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
 
         quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
@@ -131,13 +118,12 @@ class FluidSimulation(LightningModule):
         loss = physics_loss + self.config.lambda_ic * ic_loss
         losses = [loss]
 
-        num_steps = int(self.config.simulation_time / self.config.dt)
-        for step in range(num_steps):
-            t = (step + 1) * self.config.dt  # since step=0 is initial
+        for step in range(n_time_step):
+            current_time = times[step]
 
-            model.next_time_step()
+            model.next_time_step(current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
 
-            model.transfer_latent_to_physics()
+            model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
 
             quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
@@ -158,20 +144,17 @@ class FluidSimulation(LightningModule):
 
     def validation_step(self, case: Case, batch_idx: int) -> torch.Tensor:
         model = Model(case)
-        shared_nn_dict = {
-            'bc_transform_pressure': self.bc_transform_pressure,
-            'bc_transform_velocity': self.bc_transform_velocity,
-            'transform_conv': self.transform_conv,
-            'transform_conv_dt': self.transform_conv_dt,
-            'reverse_transform_conv': self.reverse_transform_conv,
-            'message_passing_conv': self.message_passing_conv,
-        }
-        model.set_shared_NN(shared_nn_dict)
 
-        model.current_time = 0.0
-        model.update_BC(model.current_time)
-        model.compute_base_features_dt()
-        model.transfer_latent_to_physics()
+        max_time = self.config.simulation_time
+        delta_t = self.config.dt
+        n_time_step = int(max_time / delta_t) + 1
+        times = torch.linspace(0, max_time, n_time_step, device=self.device)
+
+        current_time = 0.0
+
+        model.update_BC(current_time, self.bc_transform_pressure, self.bc_transform_velocity)
+        model.compute_base_features_dt(self.message_passing_conv)
+        model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
 
         quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
@@ -181,13 +164,12 @@ class FluidSimulation(LightningModule):
         loss = physics_loss + self.config.lambda_ic * ic_loss
         losses = [loss]
 
-        num_steps = int(self.config.simulation_time / self.config.dt)
-        for step in range(num_steps):
-            t = (step + 1) * self.config.dt
+        for step in range(n_time_step):
+            current_time = times[step]
 
-            model.next_time_step()
+            model.next_time_step(current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
 
-            model.transfer_latent_to_physics()
+            model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
 
             quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
 
