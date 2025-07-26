@@ -254,7 +254,7 @@ class GraphMesh():
 
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_bc_indices_list
+        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_list
 
         num_base_f = self.config.number_of_base_latent_features
         dict_node_type_to_num_bc_f = {
@@ -293,18 +293,28 @@ class GraphMesh():
                 dict_types_tuple_to_edge_indices_list[(src_type, 'influences', dst_type)] = []
         
         for i_edge in range(edge_index.shape[1]):
-            src_type_index = tensor_node_to_type_index[edge_index[0][i_edge]]
-            dst_type_index = tensor_node_to_type_index[edge_index[1][i_edge]]
+            src_node_index = edge_index[0][i_edge]
+            dst_node_index = edge_index[1][i_edge]
 
-            src_type_name = dict_node_types[src_type_index.item()]
-            dst_type_name = dict_node_types[dst_type_index.item()]
+            src_type_index = tensor_node_to_type_index[src_node_index].item()
+            dst_type_index = tensor_node_to_type_index[dst_node_index].item()
 
-            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append(i_edge)
+            src_type_name = dict_node_types[src_type_index]
+            dst_type_name = dict_node_types[dst_type_index]
+
+            src_node_indices = torch.tensor(dict_types_to_nodes[src_type_index], dtype=torch.float32, device=self.device)
+            dst_node_indices = torch.tensor(dict_types_to_nodes[dst_type_index], dtype=torch.float32, device=self.device)
+
+            src_node_new_index = (src_node_indices == src_node_index).nonzero(as_tuple=True)[0]
+            dst_node_new_index = (dst_node_indices == dst_node_index).nonzero(as_tuple=True)[0]
+
+            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append([src_node_new_index, dst_node_new_index])
         
-        for (src_type, relation, dst_type), edges_list in dict_types_tuple_to_edge_indices_list.items():
-            indices = to_torch_int(edges_list, self.device)
-            data[src_type, relation, dst_type].edge_index = indices
-            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
+        for (src_type, relation, dst_type), node_indecies_list_of_list in dict_types_tuple_to_edge_indices_list.items():
+            edges = torch.tensor(node_indecies_list_of_list, dtype=torch.long, device=self.device)
+            
+            data[src_type, relation, dst_type].edge_index = edges.t().contiguous()
+            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (2, n_edges)')
 
         return data
 
@@ -350,7 +360,7 @@ class BackgroundMesh(GraphMesh):
 
     def generate_graph_data(self):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_bc_indices_list
+        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_list
 
         num_phys_f = self.config.num_phys_features                          # u, v, p   (u_t,v_t,p_t - derivatives)
         num_phys_spatial_d = self.config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
@@ -394,24 +404,35 @@ class BackgroundMesh(GraphMesh):
         # set edge indices
         edge_index = self.edge_index
         tensor_node_to_type_index = self.node_dict_data.tensor_node_index_to_type_index
-    
+
         dict_types_tuple_to_edge_indices_list = {}
         for _, src_type in dict_node_types.items():
             for _, dst_type in dict_node_types.items():
                 dict_types_tuple_to_edge_indices_list[(src_type, 'influences', dst_type)] = []
         
         for i_edge in range(edge_index.shape[1]):
-            src_type_index = tensor_node_to_type_index[edge_index[0][i_edge]]
-            dst_type_index = tensor_node_to_type_index[edge_index[1][i_edge]]
+            src_node_index = edge_index[0][i_edge]
+            dst_node_index = edge_index[1][i_edge]
 
-            src_type_name = dict_node_types[src_type_index.item()]
-            dst_type_name = dict_node_types[dst_type_index.item()]
+            src_type_index = tensor_node_to_type_index[src_node_index].item()
+            dst_type_index = tensor_node_to_type_index[dst_node_index].item()
 
-            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append(i_edge)
+            src_type_name = dict_node_types[src_type_index]
+            dst_type_name = dict_node_types[dst_type_index]
+
+            src_node_indices = torch.tensor(dict_types_to_nodes[src_type_index], dtype=torch.float32, device=self.device)
+            dst_node_indices = torch.tensor(dict_types_to_nodes[dst_type_index], dtype=torch.float32, device=self.device)
+            
+            src_node_new_index = (src_node_indices == src_node_index).nonzero(as_tuple=True)[0]
+            dst_node_new_index = (dst_node_indices == dst_node_index).nonzero(as_tuple=True)[0]
+
+            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append([src_node_new_index, dst_node_new_index])
         
-        for (src_type, relation, dst_type), edges_list in dict_types_tuple_to_edge_indices_list.items():
-            indices = to_torch_int(edges_list, self.device)
-            data[src_type, relation, dst_type].edge_index = indices
-            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (n_edges)')
+        for (src_type, relation, dst_type), node_indecies_list_of_list in dict_types_tuple_to_edge_indices_list.items():
+            edges = torch.tensor(node_indecies_list_of_list, dtype=torch.long, device=self.device)
+            
+            data[src_type, relation, dst_type].edge_index = edges.t().contiguous()
+            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (2, n_edges)')
 
         return data
+    

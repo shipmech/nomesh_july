@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from c_mesh import GraphMesh, BackgroundMesh
 from c_mesh import PressureBC, VelocityBC
-from b_utils import to_torch_int, to_torch_float
+from b_utils import to_torch_float
 
 class Geometry(ABC):
     @abstractmethod
@@ -46,6 +46,7 @@ class Case:
         self.height: float | None = None
         self.inlet_vel: float | None = None
         self.outlet_press: float | None = None
+        self.num_nodes: float | None = None
 
         self._initialize()
 

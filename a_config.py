@@ -7,8 +7,8 @@ class SimulationConfig:
     simulation_time: float = 2.0
     dt: float = 0.01
 
-    vtk_save_frequency: int = 10
-    log_case_params_frequency: int = 10
+    vtk_save_frequency: int = 1
+    log_case_params_frequency: int = 1
     output_dir: str = "./output"
 
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -42,9 +42,9 @@ class SimulationConfig:
     knn_radius_transfer: float = 0.1
     kernel_size_transfer: int = 5
 
-    num_training_cases: int = 5
+    num_training_cases: int = 1
     num_epochs: int = 100
-    learning_rate: float = 0.001
+    learning_rate: float = 0.01
 
     viscosity: float = 0.01
     density: float = 1.0

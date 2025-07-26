@@ -153,7 +153,7 @@ class Model():
         # Update base features_dt by compute_base_features_dt at new time step
 
         # Assumes current time step is managed externally; here we advance base_features using RK4
-        # Need current t; assume self.current_time is set (add self.current_time = 0.0 in _initialize if needed)
+        # Need current t; assume current_time is set (add current_time = 0.0 in _initialize if needed)
         data = self.graph_mesh.graph_hetero_data
         node_types = data.node_types
         
@@ -162,28 +162,28 @@ class Model():
         
         # RK4 steps; since BC(t) changes, update BC at intermediate times
         # k1 = f(t, y)
-        self.update_BC(self.current_time, bc_transform_pressure, bc_transform_velocity)
+        self.update_BC(current_time, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k1 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k2 = f(t + delta_t/2, y + delta_t/2 * k1)
         for t in node_types:
             data[t].base_features = original_base[t] + (delta_t / 2) * k1[t]
-        #self.update_BC(self.current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
+        #self.update_BC(current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k2 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k3 = f(t + delta_t/2, y + delta_t/2 * k2)
         for t in node_types:
             data[t].base_features = original_base[t] + (delta_t / 2) * k2[t]
-        #self.update_BC(self.current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
+        #self.update_BC(current_time + delta_t / 2, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k3 = {t: data[t].base_features_dt.clone() for t in node_types}
         
         # k4 = f(t + delta_t, y + delta_t * k3)
         for t in node_types:
             data[t].base_features = original_base[t] + delta_t * k3[t]
-        #self.update_BC(self.current_time + delta_t, bc_transform_pressure, bc_transform_velocity)
+        #self.update_BC(current_time + delta_t, bc_transform_pressure, bc_transform_velocity)
         self.compute_base_features_dt(message_passing_conv)
         k4 = {t: data[t].base_features_dt.clone() for t in node_types}
         

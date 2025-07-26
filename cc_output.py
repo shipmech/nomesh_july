@@ -1,11 +1,7 @@
 # output.py
-import torch
-from torch_geometric.data import Data, HeteroData
 import pyvista as pv
-from scipy.interpolate import griddata
 import numpy as np
 import os
-from a_config import SimulationConfig
 from typing import List
 from d_case import Case
 from c_mesh import GraphMesh, BackgroundMesh
@@ -39,44 +35,28 @@ def save_graph_vtk(graph_mesh: GraphMesh, output_dir: str, epoch: int, case_id: 
 
     base_features = np.zeros((N, num_base_f), dtype=np.float32)
     base_features_dt = np.zeros((N, num_base_f), dtype=np.float32)
-    phys_features = np.zeros((N, 3), dtype=np.float32)
-    phys_features_dt = np.zeros((N, 3), dtype=np.float32)
 
     for node_type_index, node_type_name in dict_node_types.items():
-        type_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[node_type_index])
+        type_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
         if len(type_nodes) == 0:
             continue
         base_features[type_nodes] = data[node_type_name].base_features.detach().cpu().numpy()
         base_features_dt[type_nodes] = data[node_type_name].base_features_dt.detach().cpu().numpy()
-        phys_features[type_nodes] = data[node_type_name].phys_features.detach().cpu().numpy()
-        phys_features_dt[type_nodes] = data[node_type_name].phys_features_dt.detach().cpu().numpy()
 
     points['base_features'] = base_features
     points['base_features_dt'] = base_features_dt
-    points['phys_features'] = phys_features
-    points['phys_features_dt'] = phys_features_dt
-
-    # Add individual components for phys_features
-    points['u'] = phys_features[:, 0]
-    points['v'] = phys_features[:, 1]
-    points['p'] = phys_features[:, 2]
-
-    # Add individual components for phys_features_dt
-    points['u_t'] = phys_features_dt[:, 0]
-    points['v_t'] = phys_features_dt[:, 1]
-    points['p_t'] = phys_features_dt[:, 2]
 
     if 'Press' in data.node_types:
         press_dim = data['Press'].bc_features.shape[1]
         press_bc = np.zeros((N, press_dim), dtype=np.float32)
-        press_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[1])
+        press_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[1])
         press_bc[press_nodes] = data['Press'].bc_features.detach().cpu().numpy()
         points['press_bc_features'] = press_bc
 
     if 'NoSlip' in data.node_types:
         noslip_dim = data['NoSlip'].bc_features.shape[1]
         noslip_bc = np.zeros((N, noslip_dim), dtype=np.float32)
-        noslip_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[2])
+        noslip_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[2])
         noslip_bc[noslip_nodes] = data['NoSlip'].bc_features.detach().cpu().numpy()
         points['noslip_bc_features'] = noslip_bc
 
@@ -119,7 +99,7 @@ def save_background_vtk(background_mesh: BackgroundMesh, output_dir: str, epoch:
     phys_spatial_dd = np.zeros((N, 4), dtype=np.float32)
 
     for node_type_index, node_type_name in dict_node_types.items():
-        type_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[node_type_index])
+        type_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
         if len(type_nodes) == 0:
             continue
         phys_features[type_nodes] = data[node_type_name].phys_features.detach().cpu().numpy()
@@ -159,14 +139,14 @@ def save_background_vtk(background_mesh: BackgroundMesh, output_dir: str, epoch:
     if 'Press' in data.node_types:
         press_dim = data['Press'].bc_features.shape[1]
         press_bc = np.zeros((N, press_dim), dtype=np.float32)
-        press_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[1])
+        press_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[1])
         press_bc[press_nodes] = data['Press'].bc_features.detach().cpu().numpy()
         grid.point_data['press_bc_features'] = press_bc
 
     if 'NoSlip' in data.node_types:
         noslip_dim = data['NoSlip'].bc_features.shape[1]
         noslip_bc = np.zeros((N, noslip_dim), dtype=np.float32)
-        noslip_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_tensor[2])
+        noslip_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[2])
         noslip_bc[noslip_nodes] = data['NoSlip'].bc_features.detach().cpu().numpy()
         grid.point_data['noslip_bc_features'] = noslip_bc
 
@@ -189,5 +169,5 @@ def log_case_params(cases: List[Case], output_dir: str, epoch: int):
             f.write(f"Height: {case.height}\n")
             f.write(f"Inlet Velocity: {case.inlet_vel}\n")
             f.write(f"Outlet Pressure: {case.outlet_press}\n")
-            f.write(f"Number of Nodes: {case.graph_data.num_nodes.item()}\n")
+            f.write(f"Number of Nodes: {case.num_nodes}\n")
             f.write("\n")
