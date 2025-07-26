@@ -2,7 +2,7 @@
 import torch
 from torch import nn
 from torch_geometric.nn import SplineConv
-from config import SimulationConfig
+from a_config import SimulationConfig
 
 class PhysicsLoss(nn.Module):
     def __init__(self, config: SimulationConfig):
