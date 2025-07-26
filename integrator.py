@@ -2,7 +2,7 @@
 import torch
 from torch_geometric.data import Data
 from config import SimulationConfig
-from model import DynamicsGNN
+from model_old import DynamicsGNN
 from mesh import update_edges
 
 class TimeIntegrator:

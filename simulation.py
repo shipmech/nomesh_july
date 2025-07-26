@@ -3,7 +3,7 @@ import torch
 from lightning.pytorch import LightningModule
 from torch.optim import Adam
 from torch_geometric.data import Data
-from model import DynamicsGNN, ICImprintingNN, BCTransformingNN, BCCorrectionNN
+from model_old import DynamicsGNN, ICImprintingNN, BCTransformingNN, BCCorrectionNN
 from mapping_gnn import MappingGNN
 from integrator import TimeIntegrator
 from loss import PhysicsLoss

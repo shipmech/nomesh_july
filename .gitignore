@@ -4,6 +4,7 @@ __pycache__/
 torch_pymesh_docker/
 output/
 logs/
+test/
 
 # Ignore specific file
 11.bat

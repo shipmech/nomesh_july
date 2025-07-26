@@ -33,6 +33,13 @@ class SimulationConfig:
     num_hops: int = 1
     k_neighbors: int = 10
 
+    num_phys_features: int = 3              # u, v, p   (u_t,v_t,p_t - derivatives)
+    num_phys_spatial_features_d: int = 6      # u_x, u_y, v_x, v_y, p_x, p_y
+    num_phys_spatial_features_dd: int = 4     # u_xx, u_yy, v_xx, v_yy
+
+    knn_radius_transfer: float = 0.1
+    kernel_size_transfer: int = 5
+
     spline_kernel_size: int = 5
     spline_degree: int = 1
     spline_aggr: str = "mean"
@@ -41,8 +48,6 @@ class SimulationConfig:
     num_epochs: int = 100
     learning_rate: float = 0.001
 
-    nx: int = 50
-    ny: int = 50
     viscosity: float = 0.01
     density: float = 1.0
     lambda_ic: float = 1.0

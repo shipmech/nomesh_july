@@ -275,9 +275,9 @@ class BackgroundMesh(GraphMesh):
         dict_node_types = self.node_dict_data.dict_type_index_to_type_name
         dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_tensor
 
-        num_phys_f = 3              # u, v, p   (u_t,v_t,p_t - derivatives)
-        num_phys_spatial_d = 6      # u_x, u_y, v_x, v_y, p_x, p_y
-        num_phys_spatial_dd = 4     # u_xx, u_yy, v_xx, v_yy
+        num_phys_f = self.config.num_phys_features                          # u, v, p   (u_t,v_t,p_t - derivatives)
+        num_phys_spatial_d = self.config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
+        num_phys_spatial_dd = self.config.num_phys_spatial_features_dd      # u_xx, u_yy, v_xx, v_yy
         
         data = HeteroData()
 
