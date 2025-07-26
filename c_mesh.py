@@ -6,7 +6,6 @@ from torch_geometric.nn import knn_graph
 import pymesh
 import numpy as np
 
-from b_utils import to_torch_int, to_torch_float
 from b_utils import TimeHistoryData
 
 class BoundaryCondition(ABC):
@@ -93,10 +92,12 @@ class TriangleMeshGenerator():
 
 
 class MeshNodeDictData():
-    def __init__(self, device, node_pos):
+    def __init__(self, device, node_pos, edge_index):
         self.device = device
         
         self.nodes = node_pos   # [number of nodes, 2]
+        self.pos = node_pos
+        self.edge_index = edge_index  # [2, number of edges]
 
         # Не меняется во время симуляции
         self.dict_BCType_name_to_BC_type_index = {    # dict of boundary conditions
@@ -112,9 +113,9 @@ class MeshNodeDictData():
         }
         
         self.dict_type_index_to_enabled_BCs = {
-            0 : to_torch_int([0,0], self.device),
-            1 : to_torch_int([1,0], self.device),
-            2 : to_torch_int([0,1], self.device),
+            0 : torch.tensor([0,0], dtype=torch.int64, device=self.device),
+            1 : torch.tensor([1,0], dtype=torch.int64, device=self.device),
+            2 : torch.tensor([0,1], dtype=torch.int64, device=self.device),
         }
 
         # Граничные условия (в будущем могут меняться во время симуляции)
@@ -125,8 +126,8 @@ class MeshNodeDictData():
         self.dict_BC_index_to_node_indices_tensor = {} # dict of tensor of node indices
         # self.dict_node_index_to_BC_index = {} 
 
-        self.tensor_node_index_to_enabled_BCs = to_torch_int(torch.zeros((len(self.nodes), 2)), self.device)
-        self.tensor_node_index_to_type_index = to_torch_int(torch.zeros((len(self.nodes), 1)), self.device) # node index to node type index
+        self.tensor_node_index_to_enabled_BCs = torch.zeros((len(self.nodes), 2), dtype=torch.int64, device=self.device)
+        self.tensor_node_index_to_type_index = torch.zeros((len(self.nodes), 1), dtype=torch.int64, device=self.device) # node index to node type index
 
         self.dict_type_index_to_node_indices_list = { # dict of list of node indices
             0 : [],
@@ -181,190 +182,115 @@ class MeshNodeDictData():
 
                     break
 
-
-class GraphMesh():
-    def __init__(self, device, config, nodes_positions: np.array, bc_list: list):
-        self.device = device
+class GraphData():
+    def __init__(self, config, node_dict_data, pos, edge_index, faces):
         self.config = config
+        self.node_dict_data = node_dict_data
+        self.pos = pos
+        self.edge_index = edge_index
+        self.faces = faces
 
-        self.pos: torch.Tensor = None
-        self.edge_index: torch.Tensor = None
-        self.node_dict_data: MeshNodeDictData = None
-        self.graph_hetero_data = None
+def initialize_graph_hetero_data(config, type : str, nodes_positions : np.array, bc_list : list):
+    # type : str = 'bacground' or 'background_mesh'
+    # bc_list : list[list[BoundaryCondition, geometry_selection_cond == function]
 
-        self.initialize_mesh(nodes_positions, bc_list)
+    device = config.device
+    pos = None
+    edge_index = None
+    faces = None
+    if type == 'latent_graph':
+        pos = torch.tensor(nodes_positions, dtype=torch.float32, device=device)
+        edge_index = generate_edges(pos, config.k_neighbors, config.radius)
+    elif type == 'background_mesh':
+        mesh_generator = TriangleMeshGenerator()
+        nodes, edges, faces = mesh_generator(nodes_positions)
+        pos = torch.tensor(nodes, dtype=torch.float32, device=device)
+        edge_index = torch.tensor(edges, dtype=torch.long, device=device)
+        edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+        faces = torch.tensor(faces, dtype=torch.long, device=device)
 
-    def update_bc_features(self, t : float, bc_transform_pressure, bc_transform_velocity):
+    node_dict_data = MeshNodeDictData(device, pos, edge_index)
 
-        dict_bc_index_to_latent_value_tensor = {}
+    for bc in bc_list:
+        node_dict_data.add_BC(bc[0], bc[1])
+    node_dict_data.apply_bcs()
 
-        for bc_index, bc_exact in self.node_dict_data.dict_BC_index_to_BC_exact.items():
-            value_tensor = bc_exact.get_value(t)
-            bctype_index = self.node_dict_data.dict_BC_index_to_BCType_index[bc_index]
-            latent_value_tensor = None
-            if bctype_index == 0:
-                latent_value_tensor = bc_transform_pressure(value_tensor)
-            elif bctype_index == 1:
-                latent_value_tensor = bc_transform_velocity(value_tensor)
-            
-            dict_bc_index_to_latent_value_tensor[bc_index] = latent_value_tensor
+    node_dict_data.determine_node_types()
 
-        for node_type_index, bc_indices in self.node_dict_data.dict_type_index_to_bc_indices_list.items():
-            if len(bc_indices) == 0:
-                continue
-            node_type_name = self.node_dict_data.dict_type_index_to_type_name[node_type_index]
-            if node_type_name == 'Free':
-                continue
+    data = HeteroData()
 
-            list_of_bc_values = []
+    graph_hetero_data = generate_graph_hetero_data(config, device, data, node_dict_data, type=type)
 
-            for bc_index in bc_indices:
-                latent_value_tensor = dict_bc_index_to_latent_value_tensor[bc_index]
-                list_of_bc_values.append(latent_value_tensor)
+    graph_data = GraphData(config, node_dict_data, pos, edge_index, faces)
 
-            self.graph_hetero_data[node_type_name].bc_features = torch.stack(list_of_bc_values, dim=0)
-
-    def initialize_mesh(self, nodes_positions : np.array, bc_list : list):
-        self.pos = to_torch_float(nodes_positions, self.device)
-        self.edge_index = self.generate_edges(self.pos, self.config.k_neighbors, self.config.radius)
-
-        self.node_dict_data = MeshNodeDictData(self.device, self.pos)
-        self.determine_BCs(bc_list)
-        self.node_dict_data.determine_node_types()
-        self.graph_hetero_data = self.generate_graph_data()
-
-    def generate_edges(self, pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
-        # pos: [num_nodes, 2 - num_coordinates]
-        # edge_index: [2 is num_vertices, num_edges]
-
-        edge_index = knn_graph(pos, k=k).to(pos.device)
-        dist = torch.norm(pos[edge_index[0]] - pos[edge_index[1]], dim=1)
-        mask = dist < radius
-        edge_index = edge_index[:, mask].to(pos.device)
-        # Assert to check for invalid indices
-        if edge_index.numel() > 0:
-            assert edge_index.max() < pos.size(0), f"Invalid edge_index: max {edge_index.max()} >= num_nodes {pos.size(0)}"
-        return edge_index
+    graph_data.config = config
+    graph_data.node_dict_data = node_dict_data
+    graph_data.pos = pos
+    graph_data.edge_index = edge_index
+    graph_data.faces = faces
     
-    def determine_BCs(self, bc_list : list): # and determine node types
-        # bc_list : list[list[BoundaryCondition, geometry_selection_cond == function]
-        for bc in bc_list:
-            self.node_dict_data.add_BC(bc[0], bc[1])
-        self.node_dict_data.apply_bcs()
+    return graph_hetero_data, graph_data
 
-    def generate_graph_data(self):
-        dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_list
+def generate_edges(pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
+    # pos: [num_nodes, 2 - num_coordinates]
+    # edge_index: [2 is num_vertices, num_edges]
 
-        num_base_f = self.config.number_of_base_latent_features
+    edge_index = knn_graph(pos, k=k).to(pos.device)
+    dist = torch.norm(pos[edge_index[0]] - pos[edge_index[1]], dim=1)
+    mask = dist < radius
+    edge_index = edge_index[:, mask].to(pos.device)
+    # Assert to check for invalid indices
+    if edge_index.numel() > 0:
+        assert edge_index.max() < pos.size(0), f"Invalid edge_index: max {edge_index.max()} >= num_nodes {pos.size(0)}"
+    return edge_index
+
+def generate_graph_hetero_data(config, device, data, node_dict_data, type : str): # type : str = 'latent_graph' or 'background_mesh'
+    
+    dict_node_types = node_dict_data.dict_type_index_to_type_name
+    dict_types_to_nodes = node_dict_data.dict_type_index_to_node_indices_list
+    tensor_node_to_type_index = node_dict_data.tensor_node_index_to_type_index
+    pos, edge_index = node_dict_data.pos, node_dict_data.edge_index
+
+    data = set_features_for_graph_hetero_data(config, type, data, dict_node_types, dict_types_to_nodes, pos)
+    data = set_edges_for_graph_hetero_data(device, data, tensor_node_to_type_index, dict_node_types, dict_types_to_nodes, edge_index)
+    return data
+
+def set_features_for_graph_hetero_data(config, type : str, data, dict_node_types, dict_types_to_nodes, pos):
+    device = config.device
+    
+    if type == 'latent_graph':
+        num_base_f = config.number_of_base_latent_features
         dict_node_type_to_num_bc_f = {
             'Free' : 0,
-            'Press' : self.config.number_of_pressure_bc_latent_features,
-            'NoSlip' : self.config.number_of_velocities_bc_latent_features,
+            'Press' : config.number_of_pressure_bc_latent_features,
+            'NoSlip' : config.number_of_velocities_bc_latent_features,
         }
-        
-        data = HeteroData()
 
         # set pos for each node type and zero features for each node type
         for node_type_index, node_type_name in dict_node_types.items():
             node_indices = dict_types_to_nodes[node_type_index]
 
-            data[node_type_name].pos = self.pos[node_indices]
+            data[node_type_name].pos = pos[node_indices]
 
             data[node_type_name].base_features = torch.zeros((data[node_type_name].pos.shape[0], num_base_f),
-                                                             dtype=torch.float32,
-                                                             device=self.device)
+                                                                dtype=torch.float32,
+                                                                device=device)
             
             data[node_type_name].base_features_dt = torch.zeros((data[node_type_name].pos.shape[0], num_base_f),
                                                                 dtype=torch.float32,
-                                                                device=self.device)
+                                                                device=device)
             
             data[node_type_name].bc_features = torch.zeros((data[node_type_name].pos.shape[0], dict_node_type_to_num_bc_f[node_type_name]),
-                                                           dtype=torch.float32,
-                                                           device=self.device)
-
-        # set edge indices
-        edge_index = self.edge_index
-        tensor_node_to_type_index = self.node_dict_data.tensor_node_index_to_type_index
-
-        dict_types_tuple_to_edge_indices_list = {}
-        for _, src_type in dict_node_types.items():
-            for _, dst_type in dict_node_types.items():
-                dict_types_tuple_to_edge_indices_list[(src_type, 'influences', dst_type)] = []
-        
-        for i_edge in range(edge_index.shape[1]):
-            src_node_index = edge_index[0][i_edge]
-            dst_node_index = edge_index[1][i_edge]
-
-            src_type_index = tensor_node_to_type_index[src_node_index].item()
-            dst_type_index = tensor_node_to_type_index[dst_node_index].item()
-
-            src_type_name = dict_node_types[src_type_index]
-            dst_type_name = dict_node_types[dst_type_index]
-
-            src_node_indices = torch.tensor(dict_types_to_nodes[src_type_index], dtype=torch.float32, device=self.device)
-            dst_node_indices = torch.tensor(dict_types_to_nodes[dst_type_index], dtype=torch.float32, device=self.device)
-
-            src_node_new_index = (src_node_indices == src_node_index).nonzero(as_tuple=True)[0]
-            dst_node_new_index = (dst_node_indices == dst_node_index).nonzero(as_tuple=True)[0]
-
-            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append([src_node_new_index, dst_node_new_index])
-        
-        for (src_type, relation, dst_type), node_indecies_list_of_list in dict_types_tuple_to_edge_indices_list.items():
-            edges = torch.tensor(node_indecies_list_of_list, dtype=torch.long, device=self.device)
-            
-            data[src_type, relation, dst_type].edge_index = edges.t().contiguous()
-            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (2, n_edges)')
+                                                            dtype=torch.float32,
+                                                            device=device)
 
         return data
 
-
-class BackgroundMesh(GraphMesh):
-    def __init__(self, device, config, nodes_positions : np.array, bc_list : list):
-        super().__init__(device, config, nodes_positions, bc_list)
-
-    def initialize_mesh(self, nodes_positions : np.array, bc_list : list):
-        mesh_generator = TriangleMeshGenerator()
-        nodes, edges, faces = mesh_generator(nodes_positions)
-        self.pos = to_torch_float(nodes, self.device)
-        self.edge_index = to_torch_int(edges, self.device)
-        self.faces = to_torch_int(faces, self.device)
-
-        self.node_dict_data = MeshNodeDictData(self.device, self.pos)
-        self.determine_BCs(bc_list)
-        self.node_dict_data.determine_node_types()
-        self.graph_hetero_data = self.generate_graph_data()
-
-    def update_bc_features(self, t : float):
-
-        dict_bc_index_to_physics_value_tensor = {}
-
-        for bc_index, bc_exact in self.node_dict_data.dict_BC_index_to_BC_exact.items():
-            value_tensor = bc_exact.get_value(t)
-            dict_bc_index_to_physics_value_tensor[bc_index] = value_tensor
-
-        for node_type_index, bc_indices in self.node_dict_data.dict_type_index_to_bc_indices_list.items():
-            if len(bc_indices) == 0:
-                continue
-            node_type_name = self.node_dict_data.dict_type_index_to_type_name[node_type_index]
-            if node_type_name == 'Free':
-                continue
-
-            list_of_bc_values = []
-
-            for bc_index in bc_indices:
-                value_tensor = dict_bc_index_to_physics_value_tensor[bc_index]
-                list_of_bc_values.append(value_tensor)
-
-            self.graph_hetero_data[node_type_name].bc_features = torch.stack(list_of_bc_values, dim=0)
-
-    def generate_graph_data(self):
-        dict_node_types = self.node_dict_data.dict_type_index_to_type_name
-        dict_types_to_nodes = self.node_dict_data.dict_type_index_to_node_indices_list
-
-        num_phys_f = self.config.num_phys_features                          # u, v, p   (u_t,v_t,p_t - derivatives)
-        num_phys_spatial_d = self.config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
-        num_phys_spatial_dd = self.config.num_phys_spatial_features_dd      # u_xx, u_yy, v_xx, v_yy
+    elif type == 'background_mesh':
+        device = config.device
+        num_phys_f = config.num_phys_features                          # u, v, p   (u_t,v_t,p_t - derivatives)
+        num_phys_spatial_d = config.num_phys_spatial_features_d        # u_x, u_y, v_x, v_y, p_x, p_y
+        num_phys_spatial_dd = config.num_phys_spatial_features_dd      # u_xx, u_yy, v_xx, v_yy
         
         dict_node_type_to_num_bc_f = {
             'Free' : 0,
@@ -372,67 +298,64 @@ class BackgroundMesh(GraphMesh):
             'NoSlip' : 2,
         }
 
-        data = HeteroData()
-
         # set pos for each node type and zero features for each node type
         for node_type_index, node_type_name in dict_node_types.items():
             node_indices = dict_types_to_nodes[node_type_index]
 
-            data[node_type_name].pos = self.pos[node_indices]
+            data[node_type_name].pos = pos[node_indices]
 
             
             data[node_type_name].phys_features = torch.zeros((data[node_type_name].pos.shape[0], num_phys_f),
-                                                             dtype=torch.float32,
-                                                             device=self.device)
+                                                                dtype=torch.float32,
+                                                                device=device)
             
             data[node_type_name].phys_features_dt = torch.zeros((data[node_type_name].pos.shape[0], num_phys_f),
                                                                 dtype=torch.float32,
-                                                                device=self.device)
+                                                                device=device)
             
             data[node_type_name].phys_features_spatial_d = torch.zeros((data[node_type_name].pos.shape[0], num_phys_spatial_d),
-                                                                       dtype=torch.float32,
-                                                                       device=self.device)
+                                                                        dtype=torch.float32,
+                                                                        device=device)
             
             data[node_type_name].phys_features_spatial_dd = torch.zeros((data[node_type_name].pos.shape[0], num_phys_spatial_dd),
                                                                         dtype=torch.float32,
-                                                                        device=self.device)
+                                                                        device=device)
 
             data[node_type_name].bc_features = torch.zeros((data[node_type_name].pos.shape[0], dict_node_type_to_num_bc_f[node_type_name]),
-                                                           dtype=torch.float32,
-                                                           device=self.device)
-
-        # set edge indices
-        edge_index = self.edge_index
-        tensor_node_to_type_index = self.node_dict_data.tensor_node_index_to_type_index
-
-        dict_types_tuple_to_edge_indices_list = {}
-        for _, src_type in dict_node_types.items():
-            for _, dst_type in dict_node_types.items():
-                dict_types_tuple_to_edge_indices_list[(src_type, 'influences', dst_type)] = []
-        
-        for i_edge in range(edge_index.shape[1]):
-            src_node_index = edge_index[0][i_edge]
-            dst_node_index = edge_index[1][i_edge]
-
-            src_type_index = tensor_node_to_type_index[src_node_index].item()
-            dst_type_index = tensor_node_to_type_index[dst_node_index].item()
-
-            src_type_name = dict_node_types[src_type_index]
-            dst_type_name = dict_node_types[dst_type_index]
-
-            src_node_indices = torch.tensor(dict_types_to_nodes[src_type_index], dtype=torch.float32, device=self.device)
-            dst_node_indices = torch.tensor(dict_types_to_nodes[dst_type_index], dtype=torch.float32, device=self.device)
+                                                            dtype=torch.float32,
+                                                            device=device)
             
-            src_node_new_index = (src_node_indices == src_node_index).nonzero(as_tuple=True)[0]
-            dst_node_new_index = (dst_node_indices == dst_node_index).nonzero(as_tuple=True)[0]
-
-            dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append([src_node_new_index, dst_node_new_index])
-        
-        for (src_type, relation, dst_type), node_indecies_list_of_list in dict_types_tuple_to_edge_indices_list.items():
-            edges = torch.tensor(node_indecies_list_of_list, dtype=torch.long, device=self.device)
-            
-            data[src_type, relation, dst_type].edge_index = edges.t().contiguous()
-            #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (2, n_edges)')
-
         return data
+
+def set_edges_for_graph_hetero_data(device, data, tensor_node_to_type_index, dict_node_types, dict_types_to_nodes, edge_index):
+    # set edge indices
+    dict_types_tuple_to_edge_indices_list = {}
+    for _, src_type in dict_node_types.items():
+        for _, dst_type in dict_node_types.items():
+            dict_types_tuple_to_edge_indices_list[(src_type, 'influences', dst_type)] = []
     
+    for i_edge in range(edge_index.shape[1]):
+        src_node_index = edge_index[0][i_edge]
+        dst_node_index = edge_index[1][i_edge]
+
+        src_type_index = tensor_node_to_type_index[src_node_index].item()
+        dst_type_index = tensor_node_to_type_index[dst_node_index].item()
+
+        src_type_name = dict_node_types[src_type_index]
+        dst_type_name = dict_node_types[dst_type_index]
+
+        src_node_indices = torch.tensor(dict_types_to_nodes[src_type_index], dtype=torch.float32, device=device)
+        dst_node_indices = torch.tensor(dict_types_to_nodes[dst_type_index], dtype=torch.float32, device=device)
+
+        src_node_new_index = (src_node_indices == src_node_index).nonzero(as_tuple=True)[0]
+        dst_node_new_index = (dst_node_indices == dst_node_index).nonzero(as_tuple=True)[0]
+
+        dict_types_tuple_to_edge_indices_list[(src_type_name, 'influences', dst_type_name)].append([src_node_new_index, dst_node_new_index])
+    
+    for (src_type, relation, dst_type), node_indecies_list_of_list in dict_types_tuple_to_edge_indices_list.items():
+        edges = torch.tensor(node_indecies_list_of_list, dtype=torch.long, device=device)
+        
+        data[src_type, relation, dst_type].edge_index = edges.t().contiguous()
+        #print(src_type, relation, dst_type, 'shape = ', indices.shape, 'must be (2, n_edges)')
+
+    return data

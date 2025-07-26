@@ -24,22 +24,22 @@ class SimulationConfig:
     inlet_velocity_range: Tuple[float, float] = (-1.0, 1.0)
     outlet_pressure_range: Tuple[float, float] = (-100.0, 100.0)
 
-    number_bc_nn_hidden_dim: int = 64
+    number_bc_nn_hidden_dim: int = 2
 
     k_neighbors: int = 10
     radius: float = 0.05
 
-    number_of_base_latent_features: int = 16
-    number_of_pressure_bc_latent_features: int = 2
-    number_of_velocities_bc_latent_features: int = 4
+    number_of_base_latent_features: int = 4
+    number_of_pressure_bc_latent_features: int = 1
+    number_of_velocities_bc_latent_features: int = 1
 
-    message_passing_hidden_dim: int = 64
+    message_passing_hidden_dim: int = 2
 
     num_phys_features: int = 3                  # u, v, p   (u_t,v_t,p_t - derivatives)
     num_phys_spatial_features_d: int = 6        # u_x, u_y, v_x, v_y, p_x, p_y
     num_phys_spatial_features_dd: int = 4       # u_xx, u_yy, v_xx, v_yy
 
-    knn_radius_transfer: float = 0.1
+    knn_radius_transfer: float = 0.05
     kernel_size_transfer: int = 5
 
     num_training_cases: int = 1

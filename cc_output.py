@@ -4,16 +4,15 @@ import numpy as np
 import os
 from typing import List
 from d_case import Case
-from c_mesh import GraphMesh, BackgroundMesh
 
-def save_graph_vtk(graph_mesh: GraphMesh, output_dir: str, epoch: int, case_id: str, step: int):
+def save_graph_vtk(graph_mesh, graph_data, output_dir: str, epoch: int, case_id: str, step: int):
     os.makedirs(output_dir, exist_ok=True)
 
     filename = os.path.join(output_dir, f"graph_epoch{epoch}_case{case_id}_step{step}.vtk")
 
-    data = graph_mesh.graph_hetero_data
+    data = graph_mesh
 
-    pos = graph_mesh.pos.detach().cpu().numpy()
+    pos = graph_data.pos.detach().cpu().numpy()
     pos_3d = np.c_[pos, np.zeros(pos.shape[0])]
 
     N = pos.shape[0]
@@ -21,23 +20,23 @@ def save_graph_vtk(graph_mesh: GraphMesh, output_dir: str, epoch: int, case_id: 
     points = pv.PolyData(pos_3d)
 
     # Add edges as lines
-    edge_index = graph_mesh.edge_index.detach().cpu().numpy().T  # [num_edges, 2]
+    edge_index = graph_data.edge_index.detach().cpu().numpy().T  # [num_edges, 2]
     if edge_index.shape[0] > 0:
         lines = np.hstack([np.full((edge_index.shape[0], 1), 2, dtype=int), edge_index]).ravel()
         points.lines = lines
 
-    node_type = graph_mesh.node_dict_data.tensor_node_index_to_type_index.detach().cpu().numpy().squeeze()
+    node_type = graph_data.node_dict_data.tensor_node_index_to_type_index.detach().cpu().numpy().squeeze()
     points['node_type'] = node_type
 
-    dict_node_types = graph_mesh.node_dict_data.dict_type_index_to_type_name
+    dict_node_types = graph_data.node_dict_data.dict_type_index_to_type_name
 
-    num_base_f = data['Free'].base_features.shape[1] if 'Free' in data.node_types else graph_mesh.config.number_of_base_latent_features
+    num_base_f = data['Free'].base_features.shape[1] if 'Free' in data.node_types else graph_data.config.number_of_base_latent_features
 
     base_features = np.zeros((N, num_base_f), dtype=np.float32)
     base_features_dt = np.zeros((N, num_base_f), dtype=np.float32)
 
     for node_type_index, node_type_name in dict_node_types.items():
-        type_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
+        type_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
         if len(type_nodes) == 0:
             continue
         base_features[type_nodes] = data[node_type_name].base_features.detach().cpu().numpy()
@@ -49,68 +48,68 @@ def save_graph_vtk(graph_mesh: GraphMesh, output_dir: str, epoch: int, case_id: 
     if 'Press' in data.node_types:
         press_dim = data['Press'].bc_features.shape[1]
         press_bc = np.zeros((N, press_dim), dtype=np.float32)
-        press_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[1])
+        press_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[1])
         press_bc[press_nodes] = data['Press'].bc_features.detach().cpu().numpy()
         points['press_bc_features'] = press_bc
 
     if 'NoSlip' in data.node_types:
         noslip_dim = data['NoSlip'].bc_features.shape[1]
         noslip_bc = np.zeros((N, noslip_dim), dtype=np.float32)
-        noslip_nodes = np.array(graph_mesh.node_dict_data.dict_type_index_to_node_indices_list[2])
+        noslip_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[2])
         noslip_bc[noslip_nodes] = data['NoSlip'].bc_features.detach().cpu().numpy()
         points['noslip_bc_features'] = noslip_bc
 
     # Add BC index
     bc_index_array = np.full(N, -1, dtype=np.int32)
-    for bc_idx, node_tensor in graph_mesh.node_dict_data.dict_BC_index_to_node_indices_tensor.items():
+    for bc_idx, node_tensor in graph_data.node_dict_data.dict_BC_index_to_node_indices_tensor.items():
         nodes = node_tensor.detach().cpu().numpy()
         bc_index_array[nodes] = bc_idx
     points['bc_index'] = bc_index_array
 
     points.save(filename)
 
-def save_background_vtk(background_mesh: BackgroundMesh, output_dir: str, epoch: int, case_id: str, step: int):
+def save_background_vtk(background_mesh, graph_data, output_dir: str, epoch: int, case_id: str, step: int):
     os.makedirs(output_dir, exist_ok=True)
 
     filename = os.path.join(output_dir, f"background_epoch{epoch}_case{case_id}_step{step}.vtk")
 
-    data = background_mesh.graph_hetero_data
+    data = background_mesh
 
-    pos = background_mesh.pos.detach().cpu().numpy()
+    pos = graph_data.pos.detach().cpu().numpy()
     pos_3d = np.c_[pos, np.zeros(pos.shape[0])]
 
     N = pos.shape[0]
 
-    faces = background_mesh.faces.detach().cpu().numpy()
+    faces = graph_data.faces.detach().cpu().numpy()
     num_faces = faces.shape[0]
     cell_types = np.full(num_faces, pv.CellType.TRIANGLE, dtype=np.uint8)
     cells = np.hstack([np.full((num_faces, 1), 3), faces]).ravel()
 
     grid = pv.UnstructuredGrid(cells, cell_types, pos_3d)
 
-    node_type = background_mesh.node_dict_data.tensor_node_index_to_type_index.detach().cpu().numpy().squeeze()
+    node_type = graph_data.node_dict_data.tensor_node_index_to_type_index.detach().cpu().numpy().squeeze()
     grid.point_data['node_type'] = node_type
 
-    dict_node_types = background_mesh.node_dict_data.dict_type_index_to_type_name
+    dict_node_types = graph_data.node_dict_data.dict_type_index_to_type_name
 
     phys_features = np.zeros((N, 3), dtype=np.float32)
     phys_features_dt = np.zeros((N, 3), dtype=np.float32)
-    phys_spatial_d = np.zeros((N, 6), dtype=np.float32)
-    phys_spatial_dd = np.zeros((N, 4), dtype=np.float32)
+    phys_features_spatial_d = np.zeros((N, 6), dtype=np.float32)
+    phys_features_spatial_dd = np.zeros((N, 4), dtype=np.float32)
 
     for node_type_index, node_type_name in dict_node_types.items():
-        type_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
+        type_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[node_type_index])
         if len(type_nodes) == 0:
             continue
         phys_features[type_nodes] = data[node_type_name].phys_features.detach().cpu().numpy()
         phys_features_dt[type_nodes] = data[node_type_name].phys_features_dt.detach().cpu().numpy()
-        phys_spatial_d[type_nodes] = data[node_type_name].phys_features_spatial_d.detach().cpu().numpy()
-        phys_spatial_dd[type_nodes] = data[node_type_name].phys_features_spatial_dd.detach().cpu().numpy()
+        phys_features_spatial_d[type_nodes] = data[node_type_name].phys_features_spatial_d.detach().cpu().numpy()
+        phys_features_spatial_dd[type_nodes] = data[node_type_name].phys_features_spatial_dd.detach().cpu().numpy()
 
     grid.point_data['phys_features'] = phys_features
     grid.point_data['phys_features_dt'] = phys_features_dt
-    grid.point_data['phys_features_spatial_d'] = phys_spatial_d
-    grid.point_data['phys_features_spatial_dd'] = phys_spatial_dd
+    grid.point_data['phys_features_spatial_d'] = phys_features_spatial_d
+    grid.point_data['phys_features_spatial_dd'] = phys_features_spatial_dd
 
     # Add individual components for phys_features
     grid.point_data['u'] = phys_features[:, 0]
@@ -123,36 +122,36 @@ def save_background_vtk(background_mesh: BackgroundMesh, output_dir: str, epoch:
     grid.point_data['p_t'] = phys_features_dt[:, 2]
 
     # Add individual components for phys_features_spatial_d
-    grid.point_data['u_x'] = phys_spatial_d[:, 0]
-    grid.point_data['u_y'] = phys_spatial_d[:, 1]
-    grid.point_data['v_x'] = phys_spatial_d[:, 2]
-    grid.point_data['v_y'] = phys_spatial_d[:, 3]
-    grid.point_data['p_x'] = phys_spatial_d[:, 4]
-    grid.point_data['p_y'] = phys_spatial_d[:, 5]
+    grid.point_data['u_x'] = phys_features_spatial_d[:, 0]
+    grid.point_data['u_y'] = phys_features_spatial_d[:, 1]
+    grid.point_data['v_x'] = phys_features_spatial_d[:, 2]
+    grid.point_data['v_y'] = phys_features_spatial_d[:, 3]
+    grid.point_data['p_x'] = phys_features_spatial_d[:, 4]
+    grid.point_data['p_y'] = phys_features_spatial_d[:, 5]
 
     # Add individual components for phys_features_spatial_dd
-    grid.point_data['u_xx'] = phys_spatial_dd[:, 0]
-    grid.point_data['u_yy'] = phys_spatial_dd[:, 1]
-    grid.point_data['v_xx'] = phys_spatial_dd[:, 2]
-    grid.point_data['v_yy'] = phys_spatial_dd[:, 3]
+    grid.point_data['u_xx'] = phys_features_spatial_dd[:, 0]
+    grid.point_data['u_yy'] = phys_features_spatial_dd[:, 1]
+    grid.point_data['v_xx'] = phys_features_spatial_dd[:, 2]
+    grid.point_data['v_yy'] = phys_features_spatial_dd[:, 3]
 
     if 'Press' in data.node_types:
         press_dim = data['Press'].bc_features.shape[1]
         press_bc = np.zeros((N, press_dim), dtype=np.float32)
-        press_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[1])
+        press_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[1])
         press_bc[press_nodes] = data['Press'].bc_features.detach().cpu().numpy()
         grid.point_data['press_bc_features'] = press_bc
 
     if 'NoSlip' in data.node_types:
         noslip_dim = data['NoSlip'].bc_features.shape[1]
         noslip_bc = np.zeros((N, noslip_dim), dtype=np.float32)
-        noslip_nodes = np.array(background_mesh.node_dict_data.dict_type_index_to_node_indices_list[2])
+        noslip_nodes = np.array(graph_data.node_dict_data.dict_type_index_to_node_indices_list[2])
         noslip_bc[noslip_nodes] = data['NoSlip'].bc_features.detach().cpu().numpy()
         grid.point_data['noslip_bc_features'] = noslip_bc
 
     # Add BC index
     bc_index_array = np.full(N, -1, dtype=np.int32)
-    for bc_idx, node_tensor in background_mesh.node_dict_data.dict_BC_index_to_node_indices_tensor.items():
+    for bc_idx, node_tensor in graph_data.node_dict_data.dict_BC_index_to_node_indices_tensor.items():
         nodes = node_tensor.detach().cpu().numpy()
         bc_index_array[nodes] = bc_idx
     grid.point_data['bc_index'] = bc_index_array

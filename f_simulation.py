@@ -9,11 +9,13 @@ from a_config import SimulationConfig
 from bb_nn_models import BCTransformingMLP, TransformConv, MessagePassingMLPConv
 from cc_output import save_graph_vtk, save_background_vtk, log_case_params
 from d_case import Case
-from e_model import Model
+from e_model import *
 
 class FluidSimulation(LightningModule):
     def __init__(self, config: SimulationConfig):
         super().__init__()
+        #self.automatic_optimization = False
+
         self.config = config
         self.viscosity = config.viscosity
         self.density = config.density
@@ -73,8 +75,8 @@ class FluidSimulation(LightningModule):
     def compute_ic_loss(self, quantities: torch.Tensor, ground_truth_ic: torch.Tensor) -> torch.Tensor:
         return torch.mean((quantities - ground_truth_ic) ** 2)
     
-    def compute_bc_loss(self, model: Model) -> torch.Tensor:
-        data = model.background_mesh.graph_hetero_data
+    def compute_bc_loss(self, background_mesh) -> torch.Tensor:
+        data = partialy_clone_background_mesh(background_mesh)
         bc_loss = torch.tensor(0.0, device=self.device)
 
         if 'Press' in data.node_types and data['Press'].num_nodes > 0:
@@ -89,8 +91,8 @@ class FluidSimulation(LightningModule):
 
         return bc_loss
 
-    def collect_background_features(self, model: Model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        data = model.background_mesh.graph_hetero_data
+    def collect_background_features(self, background_mesh) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        data = partialy_clone_background_mesh(background_mesh)
         node_types = data.node_types
         num_nodes = sum(data[t].pos.shape[0] for t in node_types)
 
@@ -112,7 +114,11 @@ class FluidSimulation(LightningModule):
         return quantities, derivatives, gradients, second_gradients
 
     def training_step(self, case: Case, batch_idx: int) -> torch.Tensor:
-        model = Model(case)
+        latent_graph = case.latent_graph
+        latent_graph_data = case.latent_graph_data
+
+        background_mesh = case.background_mesh
+        background_mesh_data = case.background_mesh_data
 
         max_time = self.config.simulation_time
         delta_t = self.config.dt
@@ -121,11 +127,11 @@ class FluidSimulation(LightningModule):
 
         current_time = 0.0
 
-        model.update_BC(current_time, self.bc_transform_pressure, self.bc_transform_velocity)
-        model.compute_base_features_dt(self.message_passing_conv)
-        model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
+        latent_graph = transfer_physics_to_latent(self.config, latent_graph, background_mesh, self.reverse_transform_conv)
+        latent_graph = compute_base_features_dt(latent_graph, self.message_passing_conv)
+        background_mesh = transfer_latent_to_physics(self.config, latent_graph, background_mesh, self.transform_conv, self.transform_conv_dt)
 
-        quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
+        quantities, derivatives, gradients, second_gradients = self.collect_background_features(background_mesh)
 
         # Assuming ground_truth_ic is zeros since not provided in case
         ground_truth_ic = torch.zeros_like(quantities)
@@ -137,22 +143,25 @@ class FluidSimulation(LightningModule):
         for step in range(n_time_step):
             current_time = times[step]
 
-            model.next_time_step(current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
+            latent_graph = update_bc_features(latent_graph, latent_graph_data, current_time, self.bc_transform_pressure, self.bc_transform_velocity)
+            background_mesh = update_bc_features(background_mesh, background_mesh_data, current_time)
 
-            model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
+            latent_graph = next_time_step(latent_graph, latent_graph_data, current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
+            background_mesh = transfer_latent_to_physics(self.config, latent_graph, background_mesh, self.transform_conv, self.transform_conv_dt)
 
-            quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
+            quantities, derivatives, gradients, second_gradients = self.collect_background_features(background_mesh)
 
             physics_loss = self.compute_physics_loss(quantities, derivatives, gradients, second_gradients)
-            bc_loss = self.compute_bc_loss(model)
+            bc_loss = self.compute_bc_loss(background_mesh)
             loss = physics_loss + self.config.lambda_bc * bc_loss
             losses.append(loss)
 
             if step % self.config.vtk_save_frequency == 0:
-                save_graph_vtk(model.graph_mesh, self.config.output_dir, self.current_epoch, str(batch_idx), step)
-                save_background_vtk(model.background_mesh, self.config.output_dir, self.current_epoch, str(batch_idx), step)
+                save_graph_vtk(latent_graph, latent_graph_data, self.config.output_dir, self.current_epoch, str(batch_idx), step)
+                save_background_vtk(background_mesh, background_mesh_data, self.config.output_dir, self.current_epoch, str(batch_idx), step)
 
         total_loss = torch.mean(torch.stack(losses))
+
         self.log("train_loss", total_loss, prog_bar=True, batch_size=1)
 
         if self.current_epoch % self.config.log_case_params_frequency == 0:
@@ -161,20 +170,26 @@ class FluidSimulation(LightningModule):
         return total_loss
 
     def validation_step(self, case: Case, batch_idx: int) -> torch.Tensor:
-        model = Model(case)
+        latent_graph = case.latent_graph
+        latent_graph_data = case.latent_graph_data
+
+        background_mesh = case.background_mesh
+        background_mesh_data = case.background_mesh_data
 
         max_time = self.config.simulation_time
         delta_t = self.config.dt
         n_time_step = int(max_time / delta_t) + 1
         times = torch.linspace(0, max_time, n_time_step, device=self.device)
 
+        n_time_step = 3
+
         current_time = 0.0
 
-        model.update_BC(current_time, self.bc_transform_pressure, self.bc_transform_velocity)
-        model.compute_base_features_dt(self.message_passing_conv)
-        model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
+        latent_graph = transfer_physics_to_latent(self.config, latent_graph, background_mesh, self.reverse_transform_conv)
+        latent_graph = compute_base_features_dt(latent_graph, self.message_passing_conv)
+        background_mesh = transfer_latent_to_physics(self.config, latent_graph, background_mesh, self.transform_conv, self.transform_conv_dt)
 
-        quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
+        quantities, derivatives, gradients, second_gradients = self.collect_background_features(background_mesh)
 
         ground_truth_ic = torch.zeros_like(quantities)
         physics_loss = self.compute_physics_loss(quantities, derivatives, gradients, second_gradients)
@@ -185,20 +200,22 @@ class FluidSimulation(LightningModule):
         for step in range(n_time_step):
             current_time = times[step]
 
-            model.next_time_step(current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
+            latent_graph = update_bc_features(latent_graph, latent_graph_data, current_time, self.bc_transform_pressure, self.bc_transform_velocity)
+            background_mesh = update_bc_features(background_mesh, background_mesh_data, current_time)
 
-            model.transfer_latent_to_physics(self.transform_conv, self.transform_conv_dt)
+            latent_graph = next_time_step(latent_graph, latent_graph_data, current_time, delta_t, self.bc_transform_pressure, self.bc_transform_velocity, self.message_passing_conv)
+            background_mesh = transfer_latent_to_physics(self.config, latent_graph, background_mesh, self.transform_conv, self.transform_conv_dt)
 
-            quantities, derivatives, gradients, second_gradients = self.collect_background_features(model)
+            quantities, derivatives, gradients, second_gradients = self.collect_background_features(background_mesh)
 
             physics_loss = self.compute_physics_loss(quantities, derivatives, gradients, second_gradients)
-            bc_loss = self.compute_bc_loss(model)
+            bc_loss = self.compute_bc_loss(background_mesh)
             loss = physics_loss + self.config.lambda_bc * bc_loss
             losses.append(loss)
 
             if step % self.config.vtk_save_frequency == 0:
-                save_graph_vtk(model.graph_mesh, self.config.output_dir, self.current_epoch, f"val_{batch_idx}", step)
-                save_background_vtk(model.background_mesh, self.config.output_dir, self.current_epoch, f"val_{batch_idx}", step)
+                save_graph_vtk(latent_graph, latent_graph_data, self.config.output_dir, self.current_epoch, f"val_{batch_idx}", step)
+                save_background_vtk(background_mesh, background_mesh_data, self.config.output_dir, self.current_epoch, f"val_{batch_idx}", step)
 
         val_loss = torch.mean(torch.stack(losses))
         self.log("val_loss", val_loss, prog_bar=True, batch_size=1)

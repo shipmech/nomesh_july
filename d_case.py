@@ -2,9 +2,7 @@ from abc import ABC, abstractmethod
 import torch
 
 import numpy as np
-from c_mesh import GraphMesh, BackgroundMesh
-from c_mesh import PressureBC, VelocityBC
-from b_utils import to_torch_float
+from c_mesh import initialize_graph_hetero_data, PressureBC, VelocityBC
 
 class Geometry(ABC):
     @abstractmethod
@@ -36,11 +34,10 @@ class Case:
 
         self.geometry: Geometry | None = None
 
-        self.graph_mesh: GraphMesh | None = None
-        self.background_mesh: BackgroundMesh | None = None
+        self.latent_graph = None
+        self.background_mesh = None
 
         self.boundary_conditions: list = []
-        self.times: torch.Tensor | None = None
 
         self.width: float | None = None
         self.height: float | None = None
@@ -55,8 +52,6 @@ class Case:
         self.height = np.random.uniform(*self.config.domain_height_range)
         self.geometry = Box(self.width, self.height)
 
-        num_steps = int(self.config.simulation_time / self.config.dt) + 1
-        self.times = torch.linspace(0, self.config.simulation_time, num_steps, device=self.device)
         num_steps_for_bc = 2
         self.times_for_bc = torch.linspace(0, 1e8, num_steps_for_bc, device=self.device)
 
@@ -77,10 +72,10 @@ class Case:
         vertices = torch.stack([xx.flatten(), yy.flatten()], dim=1).cpu().numpy()
         
         bc_geometry_selection_cond = {
-            'inlet': lambda nodes, device: torch.isclose(nodes[:, 0], to_torch_float([0.0], device)),
-            'outlet': lambda nodes, device: torch.isclose(nodes[:, 0], to_torch_float([self.geometry.width], device)),
-            'top': lambda nodes, device: torch.isclose(nodes[:, 1],  to_torch_float([self.geometry.height], device)),
-            'bottom': lambda nodes, device: torch.isclose(nodes[:, 1], to_torch_float([0.0], device))
+            'inlet': lambda nodes, device: torch.isclose(nodes[:, 0], torch.tensor([0.0], dtype=torch.float32, device=device)),
+            'outlet': lambda nodes, device: torch.isclose(nodes[:, 0], torch.tensor([self.geometry.width], dtype=torch.float32, device=device)),
+            'top': lambda nodes, device: torch.isclose(nodes[:, 1],  torch.tensor([self.geometry.height], dtype=torch.float32, device=device)),
+            'bottom': lambda nodes, device: torch.isclose(nodes[:, 1], torch.tensor([0.0], dtype=torch.float32, device=device))
         }
         
         # Set boundary conditions
@@ -105,5 +100,5 @@ class Case:
 
         # Create meshes
         nodes_positions = vertices
-        self.graph_mesh = GraphMesh(self.device, self.config, nodes_positions, self.boundary_conditions)
-        self.background_mesh = BackgroundMesh(self.device, self.config, nodes_positions, self.boundary_conditions)
+        self.latent_graph, self.latent_graph_data = initialize_graph_hetero_data(self.config, 'latent_graph', nodes_positions, self.boundary_conditions)
+        self.background_mesh, self.background_mesh_data = initialize_graph_hetero_data(self.config, 'background_mesh', nodes_positions, self.boundary_conditions)

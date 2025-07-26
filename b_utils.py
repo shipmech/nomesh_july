@@ -1,12 +1,6 @@
 # utils.py
 import torch
 
-def to_torch_int(array, device):
-    return torch.tensor(array, dtype=torch.int64, device=device)
-
-def to_torch_float(array, device):
-    return torch.tensor(array, dtype=torch.float32, device=device)
-
 class TimeHistoryData:
     def __init__(self, times: torch.Tensor, values: torch.Tensor):
         self.times = times
@@ -29,8 +23,8 @@ class TimeHistoryData:
             derivatives[i] = ((self.values[i] - self.values[i - 1]) / dt_prev + (self.values[i + 1] - self.values[i]) / dt_next) / 2
         return derivatives
 
-    def get_value(self, t: float) -> torch.Tensor:
-        t_tensor = torch.tensor(t, dtype=self.times.dtype, device=self.times.device)
+    def get_value(self, t: torch.tensor) -> torch.Tensor:
+        t_tensor = t
         idx = torch.searchsorted(self.times, t_tensor)
         if idx == 0:
             return self.values[0]
@@ -41,8 +35,8 @@ class TimeHistoryData:
         v1, v2 = self.values[idx - 1], self.values[idx]
         return v1 + (v2 - v1) * (t_tensor - t1) / (t2 - t1)
 
-    def get_derivative(self, t: float) -> torch.Tensor:
-        t_tensor = torch.tensor(t, dtype=self.times.dtype, device=self.times.device)
+    def get_derivative(self, t: torch.tensor) -> torch.Tensor:
+        t_tensor = t
         idx = torch.searchsorted(self.times, t_tensor)
         if idx == 0:
             return self.derivatives[0]

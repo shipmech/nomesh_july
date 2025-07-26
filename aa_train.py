@@ -18,7 +18,8 @@ def main():
         log_every_n_steps=2,
         logger=TensorBoardLogger(save_dir="logs", name="fluid_simulation"),
         gradient_clip_val=1.0,
-        profiler=SimpleProfiler(filename="perf_logs")
+        profiler=SimpleProfiler(filename="perf_logs"),
+        #detect_anomaly=True,
     )
     
     trainer.fit(simulation, data_module)

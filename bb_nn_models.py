@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn import SplineConv
 from torch_geometric.nn import MessagePassing
 
+
 class TransformConv(nn.Module):
     def __init__(self, in_channels, out_channels, dim, kernel_size, degree=1, aggr='add'):
         super().__init__()
@@ -31,10 +32,6 @@ class BCTransformingMLP(nn.Module):
 
     def forward(self, bc_data: torch.Tensor) -> torch.Tensor:
         return self.mlp(bc_data)
-    
-import torch
-from torch import nn
-from torch_geometric.nn import MessagePassing
 
 class MessagePassingMLPConv(MessagePassing):
     def __init__(self, src_channels: int, out_channels: int, hidden_dim: int = 64, aggr: str = 'add'):
