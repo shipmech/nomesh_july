@@ -1,11 +1,13 @@
 # mesh.py
 import torch
+import torch.nn as nn
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import knn_graph
 
 import pymesh
 import numpy as np
 
+from nn_models import BCTransformingMLP
 from conditions import BoundaryCondition, PressureBC, VelocityBC
 from utils import to_torch_int, to_torch_float
 
@@ -51,6 +53,7 @@ class TriangleMeshGenerator():
             directed_edges_list.append(list(edge))
         
         return np.array(directed_edges_list)
+
 
 class MeshNodeDictData():
     def __init__(self, device, node_pos):
@@ -131,7 +134,7 @@ class MeshNodeDictData():
                     break
 
 
-class GraphMesh:
+class GraphMesh(nn.Module):
     def __init__(self, device, config, nodes_positions : np.array, bc_list : list):
         self.device = device
         self.config = config
@@ -139,33 +142,33 @@ class GraphMesh:
         self.pos : torch.Tensor = None
         self.edge_index : torch.Tensor = None
         self.node_dict_data : MeshNodeDictData = None
+        self.graph_hetero_data = None
+
+        self.bc_transform_pressure = None
+        self.bc_transform_velocity = None
+
         self.initialize_mesh(nodes_positions, bc_list)
 
-    def imply_initial_conditions(self, bc_list : list):  # TODO
-        #phys_dim = 6  # u,v,p,u_t,v_t,p_t
+    def forward(self, t):
+        self.update_bc_features(t)
+        return self.graph_hetero_data
 
-        initial_state = self.initial_condition.get_initial_state().repeat(self.pos.shape[0], 1)
-        #x[:, -phys_dim:-3] = initial_state  # u,v,p initial
-        # u_t,v_t,p_t initial = 0
-
-    def update_bc_features(self, t):  # TODO
-        for bc in self.boundary_conditions:
-            value = bc.get_value(t)
-            if isinstance(bc, VelocityBC):
-                indices = list(self.mesh.boundary_node_sets['inlet'])
-                self.graph_data.x[indices, -6:-4] = value  # Update u,v in physical quantities
-            elif isinstance(bc, PressureBC):
-                indices = list(self.mesh.boundary_node_sets['outlet'])
-                self.graph_data.x[indices, -3] = value  # Update p
+    def update_bc_features(self, t : float):
+        for bc_index, bc_exact in self.node_dict_data.dict_BC_index_to_BC_exact.items():
+            value_tensor = bc_exact.get_value(t)
+            node_indices_tensor = self.node_dict_data.dict_BC_index_to_node_indices_tensor[bc_index]
+            self.graph_hetero_data.bc_features[node_indices_tensor] = value_tensor
 
     def initialize_mesh(self, nodes_positions : np.array, bc_list : list):
         self.pos = to_torch_float(nodes_positions, self.device)
         self.edge_index = self.generate_edges(self.pos, self.config.k_neighbors, self.config.radius)
+
         self.node_dict_data = MeshNodeDictData(self.device, self.pos)
         self.determine_BCs(bc_list)
         self.determine_node_types()
-
         self.graph_hetero_data = self.generate_graph_data()
+
+        self.generate_BC_NNs()
 
     def generate_edges(self, pos: torch.Tensor, k: int, radius: float) -> torch.Tensor:
         # pos: [num_nodes, 2 - num_coordinates]
@@ -199,7 +202,6 @@ class GraphMesh:
             'Press' : self.config.number_of_pressure_bc_latent_features,
             'NoSlip' : self.config.number_of_velocities_bc_latent_features,
         }
-        num_phys_f = 3  # u,v,p   (u_t,v_t,p_t - derivatives)
         
         data = HeteroData()
 
@@ -220,14 +222,6 @@ class GraphMesh:
             data[node_type_name].bc_features = torch.zeros((data[node_type_name].pos.shape[0], dict_node_type_to_num_bc_f[node_type_name]),
                                                            dtype=torch.float32,
                                                            device=self.device)
-            
-            data[node_type_name].phys_features = torch.zeros((data[node_type_name].pos.shape[0], num_phys_f),
-                                                             dtype=torch.float32,
-                                                             device=self.device)
-            
-            data[node_type_name].phys_features_dt = torch.zeros((data[node_type_name].pos.shape[0], num_phys_f),
-                                                                dtype=torch.float32,
-                                                                device=self.device)
 
         # set edge indices
         edge_index = self.edge_index
@@ -254,6 +248,11 @@ class GraphMesh:
 
         return data
 
+    def generate_BC_NNs(self):
+        self.bc_transform_pressure = BCTransformingMLP(1, self.config.number_of_pressure_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # pressure BC
+        self.bc_transform_velocity = BCTransformingMLP(2, self.config.number_of_velocities_bc_latent_features, self.config.number_bc_nn_hidden_dim)  # velocity BC (u,v)
+
+
 class BackgroundMesh(GraphMesh):
     def __init__(self, device, config, nodes_positions : np.array, bc_list : list):
         super().__init__(device, config, nodes_positions, bc_list)
@@ -268,7 +267,6 @@ class BackgroundMesh(GraphMesh):
         self.node_dict_data = MeshNodeDictData(self.device, self.pos)
         self.determine_BCs(bc_list)
         self.determine_node_types()
-
         self.graph_hetero_data = self.generate_graph_data()
 
     def generate_graph_data(self):

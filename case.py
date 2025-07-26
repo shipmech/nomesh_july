@@ -1,25 +1,32 @@
 # case.py
 import torch
 import torch.nn as nn
-from torch_geometric.nn import SplineConv, radius
-from torch_geometric.data import HeteroData
+from torch_geometric.nn import radius
 
 import numpy as np
 from geometry import Box, Geometry
 from mesh import GraphMesh, BackgroundMesh
-from conditions import InitialCondition, PressureBC, VelocityBC
+from conditions import PressureBC, VelocityBC
 from utils import to_torch_int, to_torch_float
+from nn_models import TransformConv
 
 class Case:
     def __init__(self, config):
         self.config = config
         self.device = torch.device(self.config.device)
+
         self.geometry: Geometry | None = None
+
         self.graph_mesh: GraphMesh | None = None
         self.background_mesh: BackgroundMesh | None = None
+
         self.boundary_conditions: list = []
-        self.initial_condition: InitialCondition = InitialCondition(device=self.device)
         self.times: torch.Tensor | None = None
+
+        self.width: float | None = None
+        self.height: float | None = None
+        self.inlet_vel: float | None = None
+        self.outlet_press: float | None = None
 
         self._initialize()
 
@@ -83,19 +90,28 @@ class Model(nn.Module):
     def __init__(self, case : Case):
         self.config = case.config
         self.device = case.device
-        self.times = case.times
-        self.graph_mesh = case.graph_mesh
-        self.background_mesh = case.background_mesh
 
-        self.transform_conv = None
+        self.graph_mesh: nn.Module = case.graph_mesh
+        self.background_mesh: nn.Module = case.background_mesh
+
+        self.transform_conv: TransformConv = None
+        self.transform_conv_dt: TransformConv = None
+        self.reverse_transform_conv: TransformConv = None
         self.transform_dict_data = {}
+        self.reverse_transform_dict_data = {}
+
+        self.max_time = self.config.simulation_time
+        self.dt = self.config.dt
+        self.n_time_step = int(self.max_time / self.time_step) + 1
+        self.times = torch.linspace(0, self.max_time, self.n_time_step, device=self.device)
         
         self._initialize()
 
     def _initialize(self):
-        self.define_trasform_conv_latent_to_physics()
+        self.define_transform_conv_latent_to_physics()
+        self.define_transform_conv_physics_to_latent()
 
-    def define_trasform_conv_latent_to_physics(self):
+    def define_transform_conv_latent_to_physics(self):
         data_source = self.graph_mesh.graph_hetero_data
         data_target = self.background_mesh.graph_hetero_data
         node_types = ['Free', 'Press', 'NoSlip']  # From your MeshNodeDictData
@@ -103,6 +119,7 @@ class Model(nn.Module):
         # Step 1: Collect source pos and base_features (concat across types)
         source_pos = torch.cat([data_source[t].pos for t in node_types], dim=0)
         source_base = torch.cat([data_source[t].base_features for t in node_types], dim=0)
+        source_base_dt = torch.cat([data_source[t].base_features_dt for t in node_types], dim=0)
         num_source = source_pos.size(0)
 
         # Collect target pos (concat across types)
@@ -149,11 +166,17 @@ class Model(nn.Module):
 
         self.transform_conv = TransformConv((num_base_f, 0), out_channels, dim=dim, kernel_size=[kernel_size,kernel_size]).to(self.device)
 
+        # Separate conv for dt
+        out_channels_dt = self.config.num_phys_features  # Assuming phys_features_dt has same dim as phys_features
+        self.transform_conv_dt = TransformConv((num_base_f, 0), out_channels_dt, dim=dim, kernel_size=[kernel_size,kernel_size]).to(self.device)
+
         x = (source_base, None)
+        x_dt = (source_base_dt, None)
 
         self.transform_dict_data = {
             'node_types': node_types,
             'x': x,
+            'x_dt': x_dt,
             'edge_index': assignment,
             'edge_attr': edge_attr,
             'size': (num_source, num_target),
@@ -229,10 +252,14 @@ class Model(nn.Module):
             'target_offsets': target_offsets
         }
 
+    def define_message_passing_conv(self): # TODO: implement
+        pass
+
     def transfer_latent_to_physics(self):
         # Forward pass
         node_types = self.transform_dict_data['node_types']
         x = self.transform_dict_data['x']
+        x_dt = self.transform_dict_data['x_dt']
         assignment = self.transform_dict_data['edge_index']
         edge_attr = self.transform_dict_data['edge_attr']
         num_source = self.transform_dict_data['size'][0]
@@ -240,14 +267,16 @@ class Model(nn.Module):
         target_offsets = self.transform_dict_data['target_offsets']
 
         out = self.transform_conv(x=x, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
+        out_dt = self.transform_conv_dt(x=x_dt, edge_index=assignment, edge_attr=edge_attr, size=(num_source, num_target))
 
         # Split and assign to target per type
         data_target = self.background_mesh.graph_hetero_data
         for t in node_types:
             s = target_offsets[t]
-            data_target[t].phys_features = out[s, 0:3]
-            data_target[t].phys_features_spatial_d = out[s, 3:9]
-            data_target[t].phys_features_spatial_dd = out[s, 9:13]
+            data_target[t].phys_features = out[s, 0:self.config.num_phys_features]
+            data_target[t].phys_features_spatial_d = out[s, self.config.num_phys_features:self.config.num_phys_features + self.config.num_phys_spatial_features_d]
+            data_target[t].phys_features_spatial_dd = out[s, self.config.num_phys_features + self.config.num_phys_spatial_features_d:]
+            data_target[t].phys_features_dt = out_dt[s]
 
     def transfer_physics_to_latent(self):
         # Forward pass for reverse
@@ -267,20 +296,20 @@ class Model(nn.Module):
             s = target_offsets[t]
             data_target[t].base_features = out[s]
 
-    
-class TransformConv(nn.Module):
-    def __init__(self, in_channels, out_channels, dim, kernel_size, degree=1, aggr='add'):
-        super().__init__()
-        self.conv = SplineConv(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            dim=dim,
-            kernel_size=kernel_size,
-            degree=degree,
-            root_weight=False,
-            bias=True,
-            aggr=aggr
-        )
+    def update_initial_conditions(self):
+        self.transfer_physics_to_latent(self)
+        self.transfer_latent_to_physics(self)
 
-    def forward(self, x, edge_index, edge_attr, size):
-        return self.conv(x, edge_index, edge_attr, size)
+    def update_BC(self, t):
+        self.graph_mesh.update_bc_features(t)
+
+    def compute_base_features_dt(self):  # TODO: implement
+        # temp_graph_hetero_data = self.graph_mesh.graph_hetero_data
+        # ...
+        pass
+
+    def next_time_step(self):  # TODO: implement
+        # update BC
+        # Update base features by integraition RK4
+        # Update base features dt by compute_base_features_dt at new time step
+        pass

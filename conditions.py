@@ -33,17 +33,11 @@ class VelocityBC(BoundaryCondition):
         self.type_name = 'Vel'
 
     def get_value(self, t: float):
-        return self.time_history_u.get_value(t), self.time_history_v.get_value(t)
+        u = self.time_history_u.get_value(t)
+        v = self.time_history_v.get_value(t)
+        return torch.tensor([u, v], dtype=u.dtype, device=u.device)
     
     def get_derivative(self, t: float):
-        return self.time_history_u.get_derivative(t), self.time_history_v.get_derivative(t)
-
-class InitialCondition:
-    def __init__(self, u: float = 0.0, v: float = 0.0, p: float = 0.0, device=None):
-        self.u = u
-        self.v = v
-        self.p = p
-        self.device = device
-
-    def get_initial_state(self) -> torch.Tensor:
-        return torch.tensor([self.u, self.v, self.p], dtype=torch.float32, device=self.device)
+        dudt = self.time_history_u.get_derivative(t)
+        dvdt = self.time_history_v.get_derivative(t)
+        return torch.tensor([dudt, dvdt], dtype=dudt.dtype, device=dudt.device)

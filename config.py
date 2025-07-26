@@ -24,25 +24,23 @@ class SimulationConfig:
     inlet_velocity_range: Tuple[float, float] = (-1.0, 1.0)
     outlet_pressure_range: Tuple[float, float] = (-100.0, 100.0)
 
+    number_bc_nn_hidden_dim: int = 64
+
+    k_neighbors: int = 10
     radius: float = 0.05
 
     number_of_base_latent_features: int = 16
     number_of_pressure_bc_latent_features: int = 2
     number_of_velocities_bc_latent_features: int = 4
-    hidden_dim: int = 64
-    num_hops: int = 1
-    k_neighbors: int = 10
+    hidden_dim: int = 64 #?
+    num_hops: int = 1    #?   
 
-    num_phys_features: int = 3              # u, v, p   (u_t,v_t,p_t - derivatives)
-    num_phys_spatial_features_d: int = 6      # u_x, u_y, v_x, v_y, p_x, p_y
-    num_phys_spatial_features_dd: int = 4     # u_xx, u_yy, v_xx, v_yy
+    num_phys_features: int = 3                  # u, v, p   (u_t,v_t,p_t - derivatives)
+    num_phys_spatial_features_d: int = 6        # u_x, u_y, v_x, v_y, p_x, p_y
+    num_phys_spatial_features_dd: int = 4       # u_xx, u_yy, v_xx, v_yy
 
     knn_radius_transfer: float = 0.1
     kernel_size_transfer: int = 5
-
-    spline_kernel_size: int = 5
-    spline_degree: int = 1
-    spline_aggr: str = "mean"
 
     num_training_cases: int = 5
     num_epochs: int = 100
@@ -50,4 +48,4 @@ class SimulationConfig:
 
     viscosity: float = 0.01
     density: float = 1.0
-    lambda_ic: float = 1.0
+    lambda_ic: float = 1.0  #?
